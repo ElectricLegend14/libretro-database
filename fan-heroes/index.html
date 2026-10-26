@@ -1,0 +1,1133 @@
+<title>Emberfall Heroes</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Alegreya+SC:wght@500;700&family=Alegreya+Sans:wght@400;500;700&display=swap">
+<style>
+/* Layout: one-screen portrait war table: header, view (6x8 board or menus), tab bar like a field camp */
+:root {
+  --night: #13141f;
+  --panel: #1d1f31;
+  --panel2: #272a42;
+  --line: #383c5c;
+  --text: #f0e8d6;
+  --muted: #a7a6c0;
+  --gold: #d8a84c;
+  --gold-hi: #f4d384;
+  --ink-on-gold: #2a1d07;
+  --red: #dd5850;
+  --blue: #4b8fe2;
+  --green: #45ac6b;
+  --grey: #a9a8b8;
+  --foe-ring: #3a0d16;
+  --foe-glow: rgba(221, 60, 70, .7);
+  --move: rgba(75, 143, 226, .55);
+  --attack: rgba(221, 88, 80, .55);
+  --assist: rgba(69, 172, 107, .6);
+  --danger: rgba(170, 30, 90, .45);
+  --plain: #7c9055;
+  --plain-alt: #72854e;
+  --forest: #42683a;
+  --tree: #2b4a29;
+  --mount: #8a765f;
+  --peak: #b19c80;
+  --water: #3a6b96;
+  --wave: #5a8cb8;
+  --wall: #4c4758;
+  --brick: #3b3746;
+  --shade: rgba(0, 0, 0, .35);
+  --display: "Alegreya SC", "Palatino Linotype", Palatino, Georgia, serif;
+  --body: "Alegreya Sans", "Segoe UI", system-ui, sans-serif;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { height: 100%; }
+body { background: var(--night); color: var(--text); font-family: var(--body); font-size: 15px; line-height: 1.4; }
+button { font: inherit; color: inherit; }
+h1, h2, h3 { font-family: var(--display); font-weight: 700; margin: 0; text-wrap: balance; letter-spacing: .02em; }
+h2 { font-size: 1.5rem; }
+h3 { font-size: 1.15rem; }
+.sub { color: var(--muted); margin: 0; }
+:focus-visible { outline: 2px solid var(--gold-hi); outline-offset: 2px; }
+
+#app { height: 100%; display: flex; flex-direction: column; max-width: 560px; margin: 0 auto; }
+.top {
+  display: flex; justify-content: space-between; align-items: center; gap: 12px;
+  padding-block: 10px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  border-bottom: 1px solid var(--line);
+}
+.brand { font-family: var(--display); font-size: 1.25rem; letter-spacing: .04em; }
+.brand span { color: var(--gold); }
+.orbs { display: inline-flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; font-weight: 700; background: var(--panel2); border: 1px solid var(--line); border-radius: 999px; padding: 3px 12px; }
+.orbs i { color: var(--gold-hi); font-style: normal; }
+main {
+  flex: 1; overflow-y: auto; min-height: 0;
+  padding-block: 14px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.tabs { display: grid; grid-template-columns: repeat(4, 1fr); border-top: 1px solid var(--line); background: var(--panel); }
+.tabs button { background: none; border: 0; padding: 12px 4px; font-family: var(--display); font-size: 1rem; color: var(--muted); cursor: pointer; border-top: 2px solid transparent; }
+.tabs button.on { color: var(--gold-hi); border-top-color: var(--gold); }
+
+.stack { display: flex; flex-direction: column; gap: 16px; }
+.sect-h { display: flex; flex-direction: column; gap: 4px; }
+.btn { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 14px; cursor: pointer; font-weight: 700; }
+.btn:hover:not(:disabled) { border-color: var(--gold); }
+.btn.primary { background: linear-gradient(var(--gold-hi), var(--gold)); color: var(--ink-on-gold); border-color: var(--gold); }
+.btn.on { border-color: var(--gold-hi); color: var(--gold-hi); }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.row-btns { display: flex; gap: 8px; flex-wrap: wrap; }
+.note { min-height: 1.4em; margin: 0; color: var(--gold-hi); }
+
+/* tokens */
+.tok { position: relative; display: inline-grid; place-items: center; width: 40px; height: 40px; border-radius: 50%; border: 3px solid var(--gold); box-shadow: 0 2px 0 var(--shade); flex: none; }
+.tok.red { background: radial-gradient(circle at 35% 30%, var(--gold-hi) -60%, var(--red) 60%); }
+.tok.blue { background: radial-gradient(circle at 35% 30%, var(--gold-hi) -60%, var(--blue) 60%); }
+.tok.green { background: radial-gradient(circle at 35% 30%, var(--gold-hi) -60%, var(--green) 60%); }
+.tok.grey { background: radial-gradient(circle at 35% 30%, var(--gold-hi) -60%, var(--grey) 60%); }
+.tok .ini { font-family: var(--display); font-weight: 700; font-size: .95rem; color: var(--night); }
+.tok .mv { position: absolute; right: -6px; bottom: -6px; width: 17px; height: 17px; border-radius: 50%; background: var(--night); color: var(--gold-hi); font-size: 10px; font-weight: 700; display: grid; place-items: center; border: 1px solid var(--gold); }
+.stars { color: var(--gold-hi); font-size: .8rem; letter-spacing: .05em; }
+.merge { color: var(--green); font-weight: 700; font-size: .85rem; margin-left: 4px; }
+
+/* campaign */
+.teamrow, .slots { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.mini, .slot { display: flex; flex-direction: column; align-items: center; gap: 4px; font-size: .85rem; text-align: center; min-width: 0; }
+.mini span, .slot span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.slot { background: var(--panel); border: 1px dashed var(--line); border-radius: 10px; padding: 8px 4px; min-height: 76px; justify-content: center; }
+.slot .empty { color: var(--muted); }
+.maps { display: flex; flex-direction: column; gap: 10px; }
+.map { display: grid; grid-template-columns: 66px 1fr auto; gap: 12px; align-items: center; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 10px; }
+.mapthumb { display: grid; grid-template-columns: repeat(6, 1fr); width: 66px; aspect-ratio: 6 / 8; border-radius: 4px; overflow: hidden; }
+.mapinfo { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.tier { font-size: .72rem; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+.tier.t0 { color: var(--green); } .tier.t1 { color: var(--blue); } .tier.t2 { color: var(--red); }
+.reward { margin: 0; font-size: .9rem; color: var(--gold-hi); font-variant-numeric: tabular-nums; }
+.clr { color: var(--green); }
+.tt { position: relative; display: block; }
+.fd, .sd { position: absolute; inset: 22%; border-radius: 50%; }
+.fd { background: var(--red); box-shadow: 0 0 0 1px var(--foe-ring); }
+.sd { background: var(--gold-hi); }
+details.help { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; }
+details.help summary { cursor: pointer; font-family: var(--display); font-size: 1.05rem; }
+details.help ul { margin: 8px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; color: var(--muted); }
+details.help b { color: var(--text); }
+
+/* terrain */
+.plain { background: var(--plain); }
+.plain.alt { background: var(--plain-alt); }
+.forest { background: radial-gradient(circle at 28% 34%, var(--tree) 0 17%, transparent 18%), radial-gradient(circle at 68% 62%, var(--tree) 0 20%, transparent 21%), radial-gradient(circle at 74% 22%, var(--tree) 0 12%, transparent 13%), var(--forest); }
+.mount { background: linear-gradient(135deg, transparent 0 48%, var(--shade) 49% 52%, transparent 53%), conic-gradient(from 135deg at 50% 18%, var(--peak) 0 90deg, transparent 90deg), var(--mount); }
+.water { background: repeating-linear-gradient(170deg, var(--water) 0 7px, var(--wave) 7px 9px); }
+.wall { background: repeating-linear-gradient(0deg, var(--brick) 0 2px, transparent 2px 25%), repeating-linear-gradient(90deg, var(--brick) 0 2px, transparent 2px 33%), var(--wall); }
+
+/* battle */
+.battle { display: flex; flex-direction: column; gap: 10px; align-items: center; }
+.bbar { width: 100%; display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.bbar h3 { display: flex; gap: 8px; align-items: baseline; }
+.turn { font-variant-numeric: tabular-nums; color: var(--muted); }
+.turn b { color: var(--gold-hi); }
+.board {
+  position: relative; aspect-ratio: 6 / 8; max-width: 100%;
+  width: min(100%, 440px, max(270px, calc((100vh - 290px) * .75)));
+  border: 3px solid var(--gold); border-radius: 6px; overflow: hidden; user-select: none; -webkit-user-select: none;
+  touch-action: manipulation;
+}
+.tiles { position: absolute; inset: 0; display: grid; grid-template-columns: repeat(6, 1fr); grid-template-rows: repeat(8, 1fr); }
+.tile { position: relative; cursor: pointer; }
+.tile::before, .tile::after { content: ""; position: absolute; inset: 0; pointer-events: none; }
+.tile.dz::before { background: var(--danger); }
+.tile.mv::after { background: var(--move); box-shadow: inset 0 0 0 1px var(--shade); }
+.tile.at::after { background: var(--attack); box-shadow: inset 0 0 0 1px var(--shade); }
+.tile.as::after { background: var(--assist); }
+.tile.pend::after { box-shadow: inset 0 0 0 3px var(--gold-hi); }
+.tile.tgt::after { background: var(--attack); box-shadow: inset 0 0 0 3px var(--gold-hi); animation: pulse 1s ease-in-out infinite alternate; }
+@keyframes pulse { from { opacity: .55; } to { opacity: 1; } }
+.units { position: absolute; inset: 0; pointer-events: none; }
+.unit { position: absolute; width: calc(100% / 6); height: calc(100% / 8); display: grid; place-items: center; transition: left .22s ease, top .22s ease, opacity .5s, filter .3s; }
+.unit .tok { width: 72%; height: auto; aspect-ratio: 1; margin-top: -8%; }
+.unit .tok .ini { font-size: clamp(.7rem, 3.4vw, 1rem); }
+.unit.enemy .tok { border-color: var(--foe-ring); box-shadow: 0 0 0 2px var(--foe-glow), 0 2px 0 var(--shade); border-radius: 30%; }
+.unit.done { filter: grayscale(.85) brightness(.75); }
+.unit.dead { opacity: 0; }
+.unit.sel .tok { box-shadow: 0 0 0 3px var(--gold-hi), 0 0 14px var(--gold-hi); }
+.hpb { position: absolute; left: 14%; right: 14%; bottom: 6%; height: 5px; background: var(--night); border-radius: 3px; overflow: hidden; }
+.hpb i { display: block; height: 100%; background: var(--blue); transition: width .3s; }
+.unit.player .hpb i { background: var(--green); }
+.unit.enemy .hpb i { background: var(--red); }
+.hpn { position: absolute; left: 2%; bottom: 0; font-size: .68rem; font-weight: 700; font-variant-numeric: tabular-nums; text-shadow: 0 1px 2px var(--night), 0 0 2px var(--night); }
+.cdn { position: absolute; right: 6%; top: 2%; font-size: .72rem; font-weight: 700; color: var(--gold-hi); text-shadow: 0 1px 2px var(--night); }
+.cdn.ready { color: var(--red); }
+.pop { position: absolute; transform: translate(-50%, -10%); font-family: var(--display); font-weight: 700; font-size: 1.35rem; color: var(--text); text-shadow: 0 2px 0 var(--night), 0 0 6px var(--night); animation: floatup .95s ease-out forwards; white-space: nowrap; }
+.pop.spec { color: var(--gold-hi); font-size: 1.6rem; }
+.pop.heal { color: var(--green); }
+.pop.sname { color: var(--gold-hi); font-size: .95rem; }
+@keyframes floatup { from { opacity: 1; margin-top: 0; } to { opacity: 0; margin-top: -26px; } }
+.banner { position: absolute; left: 0; right: 0; top: 40%; text-align: center; padding: 12px; font-family: var(--display); font-size: 1.8rem; background: linear-gradient(90deg, transparent, var(--night) 20% 80%, transparent); color: var(--gold-hi); }
+.banner.foe { color: var(--red); }
+.result { position: absolute; inset: 0; background: rgba(19, 20, 31, .86); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; text-align: center; padding: 16px; }
+.result h2 { font-size: 2.2rem; color: var(--gold-hi); }
+.result p { margin: 0; }
+.panel { width: 100%; min-height: 112px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; }
+.bactions { width: 100%; display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.hint { color: var(--muted); margin: 0; }
+.hint b { color: var(--text); }
+
+.ucard { display: flex; flex-direction: column; gap: 6px; }
+.uc-top { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center; }
+.uc-top > div { min-width: 0; }
+.uc-name { font-family: var(--display); font-size: 1.1rem; }
+.uc-hp { font-variant-numeric: tabular-nums; color: var(--muted); }
+.uc-hp b { color: var(--text); font-size: 1.2rem; }
+.stats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; font-variant-numeric: tabular-nums; font-size: .88rem; }
+.stats span { display: flex; flex-direction: column; align-items: center; background: var(--panel2); border-radius: 6px; padding: 2px 0; }
+.stats b { font-size: .64rem; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); font-weight: 700; }
+.hc-meta { color: var(--muted); font-size: .85rem; }
+
+.fc { display: grid; grid-template-columns: 1fr auto 1fr; gap: 8px; align-items: center; }
+.fc-side { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.fc-side.r { text-align: right; align-items: flex-end; }
+.fc-name { font-family: var(--display); font-size: 1rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.fc-hp { font-variant-numeric: tabular-nums; font-size: 1.15rem; }
+.fc-hp .ko { color: var(--red); font-weight: 700; }
+.fc-mid { display: grid; grid-template-columns: auto auto; gap: 2px 10px; font-variant-numeric: tabular-nums; text-align: center; }
+.fc-mid .dm { font-size: 1.1rem; font-weight: 700; }
+.fc-mid .lb { grid-column: 1 / -1; font-size: .75rem; color: var(--muted); letter-spacing: .08em; text-transform: uppercase; }
+.adv { color: var(--green); } .dis { color: var(--red); }
+.fc-foot { margin-top: 6px; font-size: .85rem; color: var(--muted); }
+.fc-foot b { color: var(--gold-hi); }
+
+/* summon */
+.altar { display: grid; place-items: center; }
+.ring { position: relative; width: min(100%, 300px); aspect-ratio: 1; border-radius: 50%; background: radial-gradient(circle, var(--panel2) 0 30%, var(--panel) 31% 64%, transparent 65%); border: 1px solid var(--line); }
+.stone { position: absolute; left: 50%; top: 50%; width: 22%; aspect-ratio: 1; margin: -11% 0 0 -11%; border-radius: 50%; border: 3px solid var(--gold); cursor: pointer; transform: rotate(var(--a)) translate(150%) rotate(calc(-1 * var(--a))); transition: transform .2s, opacity .3s; }
+.stone.red { background: radial-gradient(circle at 35% 30%, var(--gold-hi) -50%, var(--red) 55%); }
+.stone.blue { background: radial-gradient(circle at 35% 30%, var(--gold-hi) -50%, var(--blue) 55%); }
+.stone.green { background: radial-gradient(circle at 35% 30%, var(--gold-hi) -50%, var(--green) 55%); }
+.stone.grey { background: radial-gradient(circle at 35% 30%, var(--gold-hi) -50%, var(--grey) 55%); }
+.stone:hover:not(:disabled) { transform: rotate(var(--a)) translate(150%) rotate(calc(-1 * var(--a))) scale(1.1); }
+.stone.taken { opacity: .18; cursor: default; }
+.core { position: absolute; inset: 36%; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; font-size: .8rem; color: var(--muted); }
+.core b { font-family: var(--display); font-size: 1.8rem; color: var(--gold-hi); line-height: 1; }
+.reveal:empty { display: none; }
+.rcard { display: grid; grid-template-columns: auto 1fr; gap: 14px; align-items: center; background: var(--panel); border: 1px solid var(--gold); border-radius: 12px; padding: 12px 14px; animation: rise .4s ease-out; }
+.rcard .tok { width: 58px; height: 58px; }
+.rcard .msg { color: var(--gold-hi); font-weight: 700; }
+@keyframes rise { from { transform: translateY(8px); opacity: 0; } to { transform: none; opacity: 1; } }
+
+/* allies */
+.roster { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 8px; }
+.hcard { position: relative; display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: start; text-align: left; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 10px; cursor: pointer; }
+.hcard.in { border-color: var(--gold); }
+.hc-body { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.hc-name { font-family: var(--display); font-size: 1.05rem; }
+.hc-title { font-size: .85rem; color: var(--muted); font-style: italic; }
+.slotno { position: absolute; top: 8px; right: 10px; width: 22px; height: 22px; border-radius: 50%; background: var(--gold); color: var(--ink-on-gold); font-weight: 700; display: grid; place-items: center; font-size: .8rem; }
+
+/* forge */
+.forge { display: grid; gap: 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
+.frow { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.field label, .slabel { font-size: .75rem; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); font-weight: 700; }
+.field input, .field select { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; color: var(--text); font: inherit; width: 100%; }
+.srow { display: grid; grid-template-columns: 44px 1fr 36px; gap: 10px; align-items: center; }
+.srow input { width: 100%; accent-color: var(--gold); }
+.srow output { text-align: right; font-variant-numeric: tabular-nums; font-weight: 700; }
+.budget { display: flex; justify-content: space-between; font-variant-numeric: tabular-nums; }
+.budget .over { color: var(--red); font-weight: 700; }
+.preview { display: flex; gap: 12px; align-items: center; }
+.preview .tok { width: 52px; height: 52px; }
+.clist { display: flex; flex-direction: column; gap: 8px; }
+.citem { display: flex; justify-content: space-between; align-items: center; gap: 10px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; }
+.citem > div { display: flex; gap: 10px; align-items: center; min-width: 0; }
+.danger-zone { border-top: 1px solid var(--line); padding-top: 14px; display: flex; flex-direction: column; gap: 8px; }
+
+@media (max-width: 420px) {
+  .map { grid-template-columns: 54px 1fr; }
+  .map .btn { grid-column: 1 / -1; }
+  .mapthumb { width: 54px; }
+  .frow { grid-template-columns: 1fr; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+}
+</style>
+
+<div id="app">
+  <header class="top">
+    <div class="brand">Emberfall <span>Heroes</span></div>
+    <div class="orbs" id="orbs" aria-label="Orbs"><i>◆</i><span id="orbCount">0</span></div>
+  </header>
+  <main id="view"></main>
+  <nav class="tabs" id="tabs">
+    <button data-tab="battle" class="on">Battle</button>
+    <button data-tab="summon">Summon</button>
+    <button data-tab="allies">Allies</button>
+    <button data-tab="forge">Forge</button>
+  </nav>
+</div>
+
+<script>
+'use strict';
+/* ---------- rules data ---------- */
+const COLS = 6, ROWS = 8;
+const COLOR_OF = { sword: 'red', redtome: 'red', lance: 'blue', bluetome: 'blue', axe: 'green', greentome: 'green', bow: 'grey', dagger: 'grey', staff: 'grey' };
+const WEAPONS = {
+  sword:     { label: 'Sword',      range: 1, magic: false },
+  lance:     { label: 'Lance',      range: 1, magic: false },
+  axe:       { label: 'Axe',        range: 1, magic: false },
+  redtome:   { label: 'Red Tome',   range: 2, magic: true },
+  bluetome:  { label: 'Blue Tome',  range: 2, magic: true },
+  greentome: { label: 'Green Tome', range: 2, magic: true },
+  bow:       { label: 'Bow',        range: 2, magic: false, effective: 'flier' },
+  dagger:    { label: 'Dagger',     range: 2, magic: false },
+  staff:     { label: 'Staff',      range: 2, magic: true, staff: true },
+};
+const MOVES = {
+  infantry: { label: 'Infantry', mov: 2, glyph: 'I' },
+  armored:  { label: 'Armored',  mov: 1, glyph: 'A' },
+  cavalry:  { label: 'Cavalry',  mov: 3, glyph: 'C' },
+  flier:    { label: 'Flier',    mov: 2, glyph: 'F' },
+};
+const SPECIALS = {
+  none:    { name: 'None',        cd: 0, desc: 'No special skill.' },
+  glimmer: { name: 'Glimmer',     cd: 2, desc: 'Boosts damage dealt by 50%.' },
+  moonbow: { name: 'Moonbow',     cd: 2, desc: 'Ignores 30% of the foe’s Def or Res.' },
+  luna:    { name: 'Luna',        cd: 3, desc: 'Ignores 50% of the foe’s Def or Res.' },
+  bonfire: { name: 'Bonfire',     cd: 3, desc: 'Adds 50% of own Def as damage.' },
+  aura:    { name: 'Dragon Aura', cd: 3, desc: 'Adds 30% of own Atk as damage.' },
+  astra:   { name: 'Astra',       cd: 4, desc: 'Boosts damage dealt by 150%.' },
+};
+const HEAL_AMOUNT = 15;
+const TCLS = { '.': 'plain', 'f': 'forest', 'm': 'mount', 'w': 'water', '#': 'wall' };
+
+// Original heroes. Stats are 5-star, level 40, weapon included.
+const ROSTER = [
+  { id: 'aldric',  name: 'Aldric',  title: 'Ember Vanguard',   weapon: 'sword',     move: 'infantry', special: 'moonbow', hp: 42, atk: 52, spd: 34, def: 28, res: 20 },
+  { id: 'seren',   name: 'Seren',   title: 'Tidecaller',       weapon: 'bluetome',  move: 'infantry', special: 'glimmer', hp: 37, atk: 52, spd: 33, def: 18, res: 32 },
+  { id: 'brannoc', name: 'Brannoc', title: 'Oakshield',        weapon: 'axe',       move: 'armored',  special: 'bonfire', hp: 52, atk: 53, spd: 22, def: 42, res: 18 },
+  { id: 'lyra',    name: 'Lyra',    title: 'Skylance',         weapon: 'lance',     move: 'flier',    special: 'luna',    hp: 40, atk: 50, spd: 34, def: 27, res: 24 },
+  { id: 'kestrel', name: 'Kestrel', title: 'Hawkeye of Varn',  weapon: 'bow',       move: 'infantry', special: 'glimmer', hp: 38, atk: 50, spd: 35, def: 22, res: 22 },
+  { id: 'mira',    name: 'Mira',    title: 'Dawnmender',       weapon: 'staff',     move: 'infantry', special: 'none',    hp: 38, atk: 40, spd: 32, def: 20, res: 34 },
+  { id: 'torvin',  name: 'Torvin',  title: 'Ironhoof',         weapon: 'lance',     move: 'cavalry',  special: 'aura',    hp: 41, atk: 50, spd: 30, def: 30, res: 18 },
+  { id: 'ysolde',  name: 'Ysolde',  title: 'Verdant Witch',    weapon: 'greentome', move: 'cavalry',  special: 'glimmer', hp: 34, atk: 50, spd: 32, def: 16, res: 30 },
+  { id: 'corvin',  name: 'Corvin',  title: 'Shadowstep',       weapon: 'dagger',    move: 'infantry', special: 'moonbow', hp: 36, atk: 46, spd: 40, def: 18, res: 28 },
+  { id: 'rhea',    name: 'Rhea',    title: 'Crimson Sage',     weapon: 'redtome',   move: 'infantry', special: 'aura',    hp: 36, atk: 53, spd: 32, def: 16, res: 28 },
+  { id: 'garrick', name: 'Garrick', title: 'Stonewall',        weapon: 'lance',     move: 'armored',  special: 'bonfire', hp: 54, atk: 50, spd: 20, def: 44, res: 22 },
+  { id: 'fenna',   name: 'Fenna',   title: 'Galewing',         weapon: 'axe',       move: 'flier',    special: 'luna',    hp: 42, atk: 52, spd: 30, def: 30, res: 18 },
+  { id: 'darius',  name: 'Darius',  title: 'Sunblade',         weapon: 'sword',     move: 'cavalry',  special: 'astra',   hp: 40, atk: 52, spd: 33, def: 24, res: 22 },
+  { id: 'elowen',  name: 'Elowen',  title: 'Moonpetal',        weapon: 'staff',     move: 'flier',    special: 'none',    hp: 35, atk: 40, spd: 30, def: 18, res: 36 },
+  { id: 'vex',     name: 'Vex',     title: 'Storm Herald',     weapon: 'bluetome',  move: 'flier',    special: 'moonbow', hp: 36, atk: 49, spd: 34, def: 20, res: 28 },
+  { id: 'hollis',  name: 'Hollis',  title: 'Thornbow',         weapon: 'bow',       move: 'cavalry',  special: 'luna',    hp: 36, atk: 48, spd: 30, def: 20, res: 24 },
+];
+
+const FOES = {
+  bandit:      { name: 'Bandit',         weapon: 'axe',       move: 'infantry', special: 'none',    hp: 40, atk: 44, spd: 24, def: 22, res: 12 },
+  pikeman:     { name: 'Pikeman',        weapon: 'lance',     move: 'infantry', special: 'none',    hp: 38, atk: 43, spd: 26, def: 24, res: 14 },
+  merc:        { name: 'Sellsword',      weapon: 'sword',     move: 'infantry', special: 'none',    hp: 37, atk: 43, spd: 30, def: 20, res: 14 },
+  archer:      { name: 'Archer',         weapon: 'bow',       move: 'infantry', special: 'none',    hp: 34, atk: 42, spd: 26, def: 16, res: 16 },
+  firemage:    { name: 'Pyre Adept',     weapon: 'redtome',   move: 'infantry', special: 'none',    hp: 32, atk: 44, spd: 26, def: 12, res: 24 },
+  thundermage: { name: 'Storm Adept',    weapon: 'bluetome',  move: 'infantry', special: 'none',    hp: 32, atk: 44, spd: 27, def: 12, res: 24 },
+  windmage:    { name: 'Gale Adept',     weapon: 'greentome', move: 'infantry', special: 'none',    hp: 32, atk: 43, spd: 28, def: 12, res: 24 },
+  wyvern:      { name: 'Drake Rider',    weapon: 'axe',       move: 'flier',    special: 'none',    hp: 42, atk: 45, spd: 22, def: 30, res: 10 },
+  knight:      { name: 'Iron Warden',    weapon: 'lance',     move: 'armored',  special: 'none',    hp: 52, atk: 46, spd: 16, def: 40, res: 12 },
+  cavalier:    { name: 'Outrider',       weapon: 'sword',     move: 'cavalry',  special: 'none',    hp: 40, atk: 44, spd: 28, def: 22, res: 18 },
+  cleric:      { name: 'Cinder Priest',  weapon: 'staff',     move: 'infantry', special: 'none',    hp: 32, atk: 36, spd: 24, def: 12, res: 28 },
+  warlord:     { name: 'Cinder Warlord', weapon: 'axe',       move: 'armored',  special: 'bonfire', hp: 62, atk: 54, spd: 22, def: 42, res: 20 },
+};
+
+// terrain rows top to bottom. foes: [type, x, y, 'guard'?] where guard waits until a hero comes in reach.
+const MAPS = [
+  { id: 'm1', name: 'Ashford Crossing', tier: 'Normal', power: 0, reward: 6, blurb: 'a river ford held by brigands',
+    terrain: ['..f...', '.w..m.', '.w....', '...f..', '......', '..ww..', 'f.....', '......'],
+    starts: [[1, 7], [2, 7], [3, 7], [4, 7]],
+    foes: [['bandit', 0, 1], ['pikeman', 5, 1], ['merc', 2, 0], ['archer', 3, 0]] },
+  { id: 'm2', name: 'Hollow Pines', tier: 'Hard', power: 4, reward: 9, blurb: 'an ambush in deep woods',
+    terrain: ['f..ff.', 'f.....', '..ff.m', '......', 'm.f..f', '..f...', '......', 'f....f'],
+    starts: [[1, 7], [2, 6], [3, 6], [4, 7]],
+    foes: [['wyvern', 5, 0], ['firemage', 1, 1], ['knight', 2, 0], ['merc', 4, 1], ['cleric', 0, 0]] },
+  { id: 'm3', name: 'Cinder Keep', tier: 'Lunatic', power: 8, reward: 14, blurb: 'the Warlord’s walled hall',
+    terrain: ['#....#', '#.##.#', '......', '.#..#.', '......', 'w.ff.w', 'w....w', '......'],
+    starts: [[1, 7], [2, 7], [3, 7], [4, 7]],
+    foes: [['warlord', 2, 0, 'guard'], ['thundermage', 1, 0], ['wyvern', 4, 0], ['windmage', 5, 2], ['cavalier', 3, 2], ['archer', 0, 2]] },
+];
+
+/* ---------- save ---------- */
+const SAVE_KEY = 'emberfall-heroes-save-v1';
+function defaultSave() {
+  return {
+    orbs: 30,
+    owned: { aldric: { r: 4, m: 0 }, seren: { r: 4, m: 0 }, brannoc: { r: 4, m: 0 }, kestrel: { r: 4, m: 0 }, mira: { r: 4, m: 0 } },
+    team: ['aldric', 'seren', 'brannoc', 'kestrel'],
+    customs: [],
+    cleared: {},
+  };
+}
+function loadSave() {
+  try {
+    const s = JSON.parse(localStorage.getItem(SAVE_KEY));
+    if (s && s.owned) return Object.assign(defaultSave(), s);
+  } catch (e) { /* storage unavailable */ }
+  return defaultSave();
+}
+let save = loadSave();
+function persist() {
+  try { localStorage.setItem(SAVE_KEY, JSON.stringify(save)); } catch (e) { /* storage unavailable */ }
+  document.getElementById('orbCount').textContent = save.orbs;
+}
+
+/* ---------- helpers ---------- */
+const $ = (s, el = document) => el.querySelector(s);
+const view = $('#view');
+const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const sleep = ms => new Promise(r => setTimeout(r, reduceMotion ? Math.min(ms, 60) : ms));
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const stars = n => '★'.repeat(n);
+const key = (x, y) => x + ',' + y;
+const inBounds = (x, y) => x >= 0 && y >= 0 && x < COLS && y < ROWS;
+const dist = (ax, ay, bx, by) => Math.abs(ax - bx) + Math.abs(ay - by);
+const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+const allHeroes = () => ROSTER.concat(save.customs);
+const heroById = id => allHeroes().find(h => h.id === id);
+function initials(n) { const s = n.trim(); return (s[0] || '?').toUpperCase() + (s[1] || '').toLowerCase(); }
+function statsFor(tpl, r = 5, m = 0) {
+  const drop = (5 - r) * 2;
+  const o = {};
+  for (const k of ['hp', 'atk', 'spd', 'def', 'res']) o[k] = tpl[k] - drop + m;
+  return o;
+}
+function tokenHTML(t) {
+  return `<span class="tok ${COLOR_OF[t.weapon]}"><span class="ini">${esc(initials(t.name))}</span><span class="mv">${MOVES[t.move].glyph}</span></span>`;
+}
+function statRow(st) {
+  return ['hp', 'atk', 'spd', 'def', 'res'].map(k => `<span><b>${k === 'hp' ? 'HP' : k[0].toUpperCase() + k.slice(1)}</b>${st[k]}</span>`).join('');
+}
+const teamHeroes = () => save.team.map(id => ({ id, tpl: heroById(id), o: save.owned[id] })).filter(t => t.tpl && t.o);
+
+/* ---------- navigation ---------- */
+let tab = 'battle';
+$('#tabs').addEventListener('click', e => {
+  const b = e.target.closest('button[data-tab]');
+  if (!b) return;
+  tab = b.dataset.tab;
+  render();
+});
+function render() {
+  $('#tabs').hidden = !!battle;
+  document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
+  if (battle) return renderBattle();
+  ({ battle: renderMaps, summon: renderSummon, allies: renderAllies, forge: renderForge })[tab]();
+  view.scrollTop = 0;
+}
+
+/* ---------- campaign ---------- */
+function thumb(m) {
+  let s = '';
+  for (let y = 0; y < ROWS; y++) for (let x = 0; x < COLS; x++) {
+    const foe = m.foes.some(f => f[1] === x && f[2] === y);
+    const st = m.starts.some(p => p[0] === x && p[1] === y);
+    s += `<i class="tt ${TCLS[m.terrain[y][x]]}">${foe ? '<b class="fd"></b>' : st ? '<b class="sd"></b>' : ''}</i>`;
+  }
+  return s;
+}
+function renderMaps() {
+  const team = teamHeroes();
+  view.innerHTML = `<section class="stack">
+    <div class="sect-h"><h2>Campaign</h2><p class="sub">Win a map to earn orbs. The first clear of each map pays 10 extra.</p></div>
+    <div class="teamrow">${team.length ? team.map(t => `<div class="mini">${tokenHTML(t.tpl)}<span>${esc(t.tpl.name)}</span></div>`).join('') : '<p class="sub">Your team is empty. Pick heroes in Allies.</p>'}</div>
+    <div class="maps">${MAPS.map((m, i) => `<article class="map">
+      <div class="mapthumb" aria-hidden="true">${thumb(m)}</div>
+      <div class="mapinfo"><span class="tier t${i}">${m.tier}</span><h3>${m.name}</h3>
+        <p class="sub">${m.foes.length} foes · ${m.blurb}</p>
+        <p class="reward">◆ ${m.reward}${save.cleared[m.id] ? ' · <span class="clr">Cleared</span>' : ' + 10 first clear'}</p></div>
+      <button class="btn primary" data-map="${i}" ${team.length ? '' : 'disabled'}>Fight</button></article>`).join('')}</div>
+    <details class="help"><summary>How battles work</summary><ul>
+      <li><b>Tap a hero</b> to see where it can move (blue) and strike (red). Tap a blue tile to move, then tap it again to wait there.</li>
+      <li><b>Tap a foe</b> in red range to preview the fight, then tap it again to attack. Healers tap an injured ally next to them.</li>
+      <li><b>Weapon triangle:</b> red beats green, green beats blue, blue beats red. Advantage adds 20% Atk; disadvantage removes 20%.</li>
+      <li><b>Speed:</b> a unit with 5 or more Spd over its foe strikes twice. Only foes with the matching range can counter.</li>
+      <li><b>Bows</b> deal 1.5× Atk to fliers. <b>Tomes and staves</b> hit Res instead of Def. Staves deal half damage.</li>
+      <li><b>Terrain:</b> forests cost infantry 2 move and block cavalry. Only fliers cross water and mountains.</li>
+      <li><b>Specials</b> charge by 1 each time a unit attacks or is attacked. The number on a token counts down to it.</li>
+    </ul></details>
+  </section>`;
+  view.querySelectorAll('[data-map]').forEach(b => b.onclick = () => startBattle(MAPS[+b.dataset.map]));
+}
+
+/* ---------- battle state ---------- */
+let battle = null;
+let unitEls = new Map();
+
+function makeUnit(tpl, st, side, [x, y], uid, rarity) {
+  const special = tpl.special || 'none';
+  return { uid, side, name: tpl.name, weapon: tpl.weapon, move: tpl.move, special, rarity,
+    hp: st.hp, maxHp: st.hp, atk: st.atk, spd: st.spd, def: st.def, res: st.res,
+    x, y, cd: SPECIALS[special].cd, acted: false, guard: false };
+}
+function startBattle(map) {
+  const units = [];
+  let uid = 0;
+  teamHeroes().slice(0, 4).forEach((t, i) => units.push(makeUnit(t.tpl, statsFor(t.tpl, t.o.r, t.o.m), 'player', map.starts[i], uid++, t.o.r)));
+  for (const [fid, x, y, flag] of map.foes) {
+    const f = FOES[fid], p = map.power, half = Math.floor(p / 2);
+    const u = makeUnit(f, { hp: f.hp + p, atk: f.atk + p, spd: f.spd + half, def: f.def + half, res: f.res + half }, 'enemy', [x, y], uid++);
+    u.guard = flag === 'guard';
+    units.push(u);
+  }
+  battle = { map, terrain: map.terrain, units, turn: 1, phase: 'player', busy: false, over: false, danger: false,
+    sel: null, pending: null, target: null, healTarget: null, inspect: null,
+    moveSet: new Set(), atkSet: new Set(), healSet: new Set() };
+  render();
+  playerPhaseBanner();
+}
+async function playerPhaseBanner() {
+  battle.busy = true;
+  await banner('Player Phase');
+  battle.busy = false;
+}
+
+const terr = (x, y) => battle.terrain[y][x];
+function moveCost(move, t) {
+  if (t === '#') return Infinity;
+  if (move === 'flier') return 1;
+  if (t === 'm' || t === 'w') return Infinity;
+  if (t === 'f') return move === 'cavalry' ? Infinity : move === 'infantry' ? 2 : 1;
+  return 1;
+}
+const unitAt = (x, y) => battle.units.find(u => u.hp > 0 && u.x === x && u.y === y);
+const alive = side => battle.units.filter(u => u.hp > 0 && u.side === side);
+
+// Tiles a unit can end its move on. Allies can be passed through, foes block.
+function reach(u) {
+  const mov = MOVES[u.move].mov;
+  const best = new Map([[key(u.x, u.y), 0]]);
+  const q = [[u.x, u.y, 0]];
+  while (q.length) {
+    q.sort((a, b) => a[2] - b[2]);
+    const [x, y, c] = q.shift();
+    if (c > best.get(key(x, y))) continue;
+    for (const [dx, dy] of DIRS) {
+      const nx = x + dx, ny = y + dy;
+      if (!inBounds(nx, ny)) continue;
+      const nc = c + moveCost(u.move, terr(nx, ny));
+      if (nc > mov) continue;
+      const o = unitAt(nx, ny);
+      if (o && o.side !== u.side) continue;
+      const k = key(nx, ny);
+      if (best.has(k) && best.get(k) <= nc) continue;
+      best.set(k, nc);
+      q.push([nx, ny, nc]);
+    }
+  }
+  const out = [];
+  for (const k of best.keys()) {
+    const [x, y] = k.split(',').map(Number);
+    const o = unitAt(x, y);
+    if (!o || o === u) out.push([x, y]);
+  }
+  return out;
+}
+function ringAround(tiles, range) {
+  const s = new Set();
+  for (const [x, y] of tiles) for (let dx = -range; dx <= range; dx++) {
+    const dy = range - Math.abs(dx);
+    for (const yy of dy ? [y - dy, y + dy] : [y]) if (inBounds(x + dx, yy)) s.add(key(x + dx, yy));
+  }
+  return s;
+}
+const threat = u => ringAround(reach(u), WEAPONS[u.weapon].range);
+
+/* ---------- combat ---------- */
+function triangle(a, b) {
+  const beats = { red: 'green', green: 'blue', blue: 'red' };
+  const ca = COLOR_OF[a.weapon], cb = COLOR_OF[b.weapon];
+  if (beats[ca] === cb) return 1;
+  if (beats[cb] === ca) return -1;
+  return 0;
+}
+function hitDamage(src, tgt, special) {
+  const W = WEAPONS[src.weapon];
+  let atk = src.atk;
+  if (W.effective === 'flier' && tgt.move === 'flier') atk = Math.floor(atk * 1.5);
+  atk += Math.floor(atk * 0.2) * triangle(src, tgt);
+  let mit = W.magic ? tgt.res : tgt.def;
+  if (special === 'moonbow') mit -= Math.floor(mit * 0.3);
+  if (special === 'luna') mit -= Math.floor(mit * 0.5);
+  let dmg = Math.max(0, atk - mit);
+  if (special === 'glimmer') dmg += Math.floor(dmg * 0.5);
+  if (special === 'astra') dmg += Math.floor(dmg * 1.5);
+  if (special === 'bonfire') dmg += Math.floor(src.def * 0.5);
+  if (special === 'aura') dmg += Math.floor(src.atk * 0.3);
+  if (W.staff) dmg = Math.floor(dmg / 2);
+  return dmg;
+}
+// Combat is deterministic, so the forecast and the real fight use the same simulation.
+function simulate(a, d, ax, ay) {
+  const A = { u: a, hp: a.hp, cd: a.cd }, D = { u: d, hp: d.hp, cd: d.cd };
+  const canCounter = WEAPONS[d.weapon].range === dist(ax, ay, d.x, d.y);
+  const seq = ['a'];
+  if (canCounter) seq.push('d');
+  if (a.spd >= d.spd + 5) seq.push('a');
+  else if (canCounter && d.spd >= a.spd + 5) seq.push('d');
+  const hits = [];
+  for (const s of seq) {
+    const S = s === 'a' ? A : D, T = s === 'a' ? D : A;
+    if (S.hp <= 0 || T.hp <= 0) break;
+    const fire = S.u.special !== 'none' && S.cd === 0;
+    const dmg = hitDamage(S.u, T.u, fire ? S.u.special : null);
+    T.hp = Math.max(0, T.hp - dmg);
+    S.cd = fire ? SPECIALS[S.u.special].cd : Math.max(0, S.cd - 1);
+    T.cd = Math.max(0, T.cd - 1);
+    hits.push({ by: s, dmg, special: fire });
+  }
+  return { A, D, hits, seq, canCounter, adv: triangle(a, d),
+    aDmg: hitDamage(a, d, null), dDmg: canCounter ? hitDamage(d, a, null) : 0 };
+}
+
+/* ---------- battle view ---------- */
+function renderBattle() {
+  const m = battle.map;
+  unitEls = new Map();
+  view.innerHTML = `<div class="battle">
+    <div class="bbar"><h3><span class="tier t${MAPS.indexOf(m)}">${m.tier}</span>${m.name}</h3><div class="turn" id="turnLbl"></div></div>
+    <div class="board" id="board">
+      <div class="tiles" id="tiles"></div>
+      <div class="units" id="units"></div>
+      <div class="banner" id="banner" hidden></div>
+      <div class="result" id="result" hidden></div>
+    </div>
+    <div class="panel" id="panel"></div>
+    <div class="bactions">
+      <button class="btn" id="dzBtn">Danger zone</button>
+      <button class="btn primary" id="endBtn">End turn</button>
+      <button class="btn" id="quitBtn">Retreat</button>
+    </div>
+  </div>`;
+  const tiles = $('#tiles');
+  let html = '';
+  for (let y = 0; y < ROWS; y++) for (let x = 0; x < COLS; x++)
+    html += `<div class="tile ${TCLS[terr(x, y)]} ${(x + y) % 2 ? 'alt' : ''}" data-x="${x}" data-y="${y}"></div>`;
+  tiles.innerHTML = html;
+  tiles.addEventListener('click', e => {
+    const t = e.target.closest('.tile');
+    if (t) onTile(+t.dataset.x, +t.dataset.y);
+  });
+  $('#dzBtn').onclick = () => { battle.danger = !battle.danger; updateBoard(); };
+  $('#endBtn').onclick = () => {
+    if (battle.busy || battle.over || battle.phase !== 'player') return;
+    clearSel();
+    alive('player').forEach(u => u.acted = true);
+    afterAction();
+  };
+  let quitArmed = null;
+  $('#quitBtn').onclick = e => {
+    if (battle.over || quitArmed) { clearTimeout(quitArmed); battle = null; render(); return; }
+    e.target.textContent = 'Tap to confirm';
+    quitArmed = setTimeout(() => { quitArmed = null; e.target.textContent = 'Retreat'; }, 2500);
+  };
+  updateBoard();
+}
+
+function updateBoard() {
+  const b = battle;
+  if (!b) return;
+  const cls = new Map();
+  const add = (k, c) => cls.set(k, (cls.get(k) || '') + ' ' + c);
+  if (b.danger) {
+    const dz = new Set();
+    for (const e of alive('enemy')) for (const k of threat(e)) dz.add(k);
+    dz.forEach(k => add(k, 'dz'));
+  }
+  if (b.sel) {
+    b.moveSet.forEach(k => add(k, 'mv'));
+    b.atkSet.forEach(k => { if (!b.moveSet.has(k)) add(k, 'at'); });
+    for (const a of alive('player')) if (a !== b.sel && a.hp < a.maxHp && b.healSet.has(key(a.x, a.y))) add(key(a.x, a.y), 'as');
+    add(key(...b.pending), 'pend');
+    if (b.target) add(key(b.target.x, b.target.y), 'tgt');
+  } else if (b.inspect && b.inspect.hp > 0) {
+    const r = reach(b.inspect);
+    const ms = new Set(r.map(p => key(...p)));
+    ms.forEach(k => add(k, 'mv'));
+    ringAround(r, WEAPONS[b.inspect.weapon].range).forEach(k => { if (!ms.has(k)) add(k, 'at'); });
+  }
+  document.querySelectorAll('#tiles .tile').forEach(t => {
+    const base = `tile ${TCLS[terr(+t.dataset.x, +t.dataset.y)]} ${(+t.dataset.x + +t.dataset.y) % 2 ? 'alt' : ''}`;
+    t.className = base + (cls.get(key(t.dataset.x, t.dataset.y)) || '');
+  });
+
+  const layer = $('#units');
+  for (const u of b.units) {
+    let el = unitEls.get(u.uid);
+    if (!el) {
+      el = document.createElement('div');
+      el.innerHTML = `${tokenHTML(u)}<div class="hpb"><i></i></div><span class="hpn"></span><span class="cdn"></span>`;
+      layer.appendChild(el);
+      unitEls.set(u.uid, el);
+    }
+    const pos = b.sel === u ? b.pending : [u.x, u.y];
+    el.style.left = pos[0] * 100 / COLS + '%';
+    el.style.top = pos[1] * 100 / ROWS + '%';
+    el.className = `unit ${u.side}${u.acted ? ' done' : ''}${u.hp <= 0 ? ' dead' : ''}${b.sel === u ? ' sel' : ''}`;
+    el.querySelector('.hpb i').style.width = (u.hp / u.maxHp * 100) + '%';
+    el.querySelector('.hpn').textContent = u.hp;
+    const cdn = el.querySelector('.cdn');
+    cdn.textContent = u.special !== 'none' ? u.cd : '';
+    cdn.className = 'cdn' + (u.cd === 0 ? ' ready' : '');
+  }
+
+  $('#turnLbl').innerHTML = `Turn <b>${b.turn}</b> · ${b.phase === 'player' ? 'Player phase' : 'Enemy phase'}`;
+  $('#dzBtn').classList.toggle('on', b.danger);
+  $('#endBtn').disabled = b.phase !== 'player' || b.over;
+  $('#panel').innerHTML = panelHTML();
+}
+
+function unitCard(u) {
+  const W = WEAPONS[u.weapon], sp = SPECIALS[u.special];
+  const skill = u.special !== 'none'
+    ? `Special: <b>${sp.name}</b> (${u.cd === 0 ? 'ready' : 'in ' + u.cd}). ${sp.desc}`
+    : W.staff ? `Assist: Heal restores ${HEAL_AMOUNT} HP to an adjacent ally.` : 'No special skill.';
+  return `<div class="ucard"><div class="uc-top">${tokenHTML(u)}
+    <div><div class="uc-name">${esc(u.name)} ${u.side === 'player' && u.rarity ? `<span class="stars">${stars(u.rarity)}</span>` : ''}</div>
+    <div class="hc-meta">${u.side === 'enemy' ? 'Foe · ' : ''}${W.label} · range ${W.range} · ${MOVES[u.move].label}${u.guard ? ' · Holding position' : ''}</div></div>
+    <div class="uc-hp"><b>${u.hp}</b>/${u.maxHp}</div></div>
+    <div class="stats">${statRow({ hp: u.maxHp, atk: u.atk, spd: u.spd, def: u.def, res: u.res })}</div>
+    <div class="hc-meta">${skill}</div></div>`;
+}
+function panelHTML() {
+  const b = battle;
+  if (b.sel && b.target) {
+    const a = b.sel, d = b.target, s = simulate(a, d, ...b.pending);
+    const aN = s.seq.filter(x => x === 'a').length, dN = s.seq.filter(x => x === 'd').length;
+    const hp = (from, to) => `${from} → ${to === 0 ? '<span class="ko">0</span>' : to}`;
+    const fired = s.hits.filter(h => h.special).map(h => SPECIALS[(h.by === 'a' ? a : d).special].name + ' triggers');
+    return `<div class="fc">
+      <div class="fc-side"><span class="fc-name">${esc(a.name)}</span><span class="fc-hp">${hp(a.hp, s.A.hp)}</span></div>
+      <div class="fc-mid"><span class="dm">${s.aDmg}${aN > 1 ? ' ×' + aN : ''}</span><span class="dm">${s.canCounter ? s.dDmg + (dN > 1 ? ' ×' + dN : '') : '—'}</span>
+        <span class="lb ${s.adv > 0 ? 'adv' : s.adv < 0 ? 'dis' : ''}">${s.adv > 0 ? 'Advantage' : s.adv < 0 ? 'Disadvantage' : 'Even'}</span></div>
+      <div class="fc-side r"><span class="fc-name">${esc(d.name)}</span><span class="fc-hp">${hp(d.hp, s.D.hp)}</span></div></div>
+      <div class="fc-foot">${fired.length ? fired.join(', ') + '. ' : ''}${s.canCounter ? '' : 'No counterattack. '}<b>Tap the foe again to attack.</b></div>`;
+  }
+  if (b.sel && b.healTarget) {
+    const t = b.healTarget;
+    return `${unitCard(b.sel)}<div class="fc-foot">Heal ${esc(t.name)}: ${t.hp} → ${Math.min(t.maxHp, t.hp + HEAL_AMOUNT)} HP. <b>Tap them again to heal.</b></div>`;
+  }
+  if (b.sel) return `${unitCard(b.sel)}<div class="fc-foot">Tap a blue tile to move, tap it again to wait. Tap a foe in red to preview.</div>`;
+  if (b.inspect && b.inspect.hp > 0) return unitCard(b.inspect);
+  if (b.over) return '<p class="hint">The battle is over.</p>';
+  if (b.phase === 'enemy') return '<p class="hint">The enemy is moving…</p>';
+  const left = alive('player').filter(u => !u.acted).length;
+  return `<p class="hint"><b>${left} hero${left === 1 ? '' : 'es'}</b> ready. Tap a hero to act, or tap a foe to see how far it can reach. Turn on <b>Danger zone</b> to see every tile the enemy can hit.</p>`;
+}
+
+/* ---------- player input ---------- */
+function clearSel() {
+  Object.assign(battle, { sel: null, pending: null, target: null, healTarget: null, moveSet: new Set(), atkSet: new Set(), healSet: new Set() });
+}
+function select(u) {
+  const r = reach(u);
+  Object.assign(battle, { sel: u, pending: [u.x, u.y], target: null, healTarget: null, inspect: null,
+    moveSet: new Set(r.map(p => key(...p))),
+    atkSet: ringAround(r, WEAPONS[u.weapon].range),
+    healSet: WEAPONS[u.weapon].staff ? ringAround(r, 1) : new Set() });
+}
+// Choose a reachable tile at the right distance from the target, preferring where the unit already stands.
+function pickFrom(u, t, range) {
+  const opts = reach(u).filter(([x, y]) => dist(x, y, t.x, t.y) === range);
+  if (!opts.length) return null;
+  const [px, py] = battle.pending;
+  if (opts.some(([x, y]) => x === px && y === py)) return [px, py];
+  opts.sort((a, b) => dist(a[0], a[1], px, py) - dist(b[0], b[1], px, py) || moveCost(u.move, terr(...b)) - moveCost(u.move, terr(...a)));
+  return opts[0];
+}
+function onTile(x, y) {
+  const b = battle;
+  if (!b || b.busy || b.over || b.phase !== 'player') return;
+  const u = unitAt(x, y), sel = b.sel, k = key(x, y);
+  if (sel) {
+    if (u && u.side === 'enemy' && b.atkSet.has(k)) {
+      if (b.target === u) return commitAttack();
+      const from = pickFrom(sel, u, WEAPONS[sel.weapon].range);
+      if (from) { Object.assign(b, { pending: from, target: u, healTarget: null }); return updateBoard(); }
+    }
+    if (u && u.side === 'player' && u !== sel && u.hp < u.maxHp && b.healSet.has(k)) {
+      if (b.healTarget === u) return commitHeal();
+      const from = pickFrom(sel, u, 1);
+      if (from) { Object.assign(b, { pending: from, healTarget: u, target: null }); return updateBoard(); }
+    }
+    if (b.moveSet.has(k) && (!u || u === sel)) {
+      const [px, py] = b.pending;
+      if (px === x && py === y && !b.target && !b.healTarget) return commitWait();
+      Object.assign(b, { pending: [x, y], target: null, healTarget: null });
+      return updateBoard();
+    }
+    clearSel();
+    if (u && u.side === 'player' && !u.acted) select(u);
+    else if (u && u.side === 'enemy') b.inspect = u;
+    return updateBoard();
+  }
+  if (u && u.side === 'player' && !u.acted) select(u);
+  else if (u && u.side === 'enemy') b.inspect = b.inspect === u ? null : u;
+  else b.inspect = null;
+  updateBoard();
+}
+async function commitAttack() {
+  const b = battle, a = b.sel, d = b.target, [px, py] = b.pending;
+  clearSel();
+  b.busy = true;
+  await doCombat(a, d, px, py);
+  a.acted = true;
+  b.busy = false;
+  afterAction();
+}
+async function commitHeal() {
+  const b = battle, u = b.sel, t = b.healTarget, [px, py] = b.pending;
+  clearSel();
+  b.busy = true;
+  u.x = px; u.y = py;
+  const amt = Math.min(HEAL_AMOUNT, t.maxHp - t.hp);
+  t.hp += amt;
+  u.acted = true;
+  updateBoard();
+  popup(t, '+' + amt, 'heal');
+  await sleep(450);
+  b.busy = false;
+  afterAction();
+}
+function commitWait() {
+  const b = battle, u = b.sel;
+  [u.x, u.y] = b.pending;
+  u.acted = true;
+  clearSel();
+  afterAction();
+}
+async function afterAction() {
+  updateBoard();
+  if (checkEnd()) return;
+  if (alive('player').every(u => u.acted)) {
+    await sleep(250);
+    await enemyPhase();
+  }
+}
+
+/* ---------- animation ---------- */
+function popup(u, text, cls = '') {
+  const el = document.createElement('div');
+  el.className = 'pop ' + cls;
+  el.textContent = text;
+  el.style.left = (u.x + 0.5) * 100 / COLS + '%';
+  el.style.top = u.y * 100 / ROWS + '%';
+  $('#units').appendChild(el);
+  setTimeout(() => el.remove(), 1000);
+}
+function lunge(src, tgt) {
+  const el = unitEls.get(src.uid);
+  if (!el || reduceMotion || !el.animate) return;
+  const dx = Math.sign(tgt.x - src.x), dy = Math.sign(tgt.y - src.y);
+  el.animate([{ transform: 'none' }, { transform: `translate(${dx * 28}%, ${dy * 28}%)` }, { transform: 'none' }], { duration: 260, easing: 'ease-out' });
+}
+async function banner(text, cls = '') {
+  const el = $('#banner');
+  if (!el) return;
+  el.textContent = text;
+  el.className = 'banner ' + cls;
+  el.hidden = false;
+  await sleep(850);
+  el.hidden = true;
+}
+async function doCombat(a, d, ax, ay) {
+  const moved = a.x !== ax || a.y !== ay;
+  a.x = ax; a.y = ay;
+  updateBoard();
+  if (moved) await sleep(260);
+  const s = simulate(a, d, ax, ay);
+  for (const h of s.hits) {
+    const src = h.by === 'a' ? a : d, tgt = h.by === 'a' ? d : a;
+    lunge(src, tgt);
+    await sleep(140);
+    tgt.hp = Math.max(0, tgt.hp - h.dmg);
+    if (h.special) popup(src, SPECIALS[src.special].name, 'sname');
+    popup(tgt, h.dmg, h.special ? 'spec' : '');
+    updateBoard();
+    await sleep(460);
+  }
+  a.hp = s.A.hp; d.hp = s.D.hp; a.cd = s.A.cd; d.cd = s.D.cd;
+  a.guard = false; d.guard = false;
+  updateBoard();
+  await sleep(160);
+}
+
+/* ---------- enemy AI ---------- */
+// Steps to the nearest hero for each tile, ignoring units, for the given movement type.
+function distField(move) {
+  const f = new Map(), q = [];
+  for (const p of alive('player')) { f.set(key(p.x, p.y), 0); q.push([p.x, p.y, 0]); }
+  while (q.length) {
+    q.sort((a, b) => a[2] - b[2]);
+    const [x, y, c] = q.shift();
+    if (c > f.get(key(x, y))) continue;
+    for (const [dx, dy] of DIRS) {
+      const nx = x + dx, ny = y + dy;
+      if (!inBounds(nx, ny)) continue;
+      const nc = c + (c === 0 ? 1 : moveCost(move, terr(x, y)));
+      if (!isFinite(nc) || !isFinite(moveCost(move, terr(nx, ny)))) continue;
+      const k = key(nx, ny);
+      if (f.has(k) && f.get(k) <= nc) continue;
+      f.set(k, nc);
+      q.push([nx, ny, nc]);
+    }
+  }
+  return f;
+}
+async function enemyAct(e) {
+  const r = reach(e), rng = WEAPONS[e.weapon].range;
+  let best = null;
+  for (const p of alive('player')) for (const [x, y] of r) {
+    if (dist(x, y, p.x, p.y) !== rng) continue;
+    const s = simulate(e, p, x, y);
+    let score = (p.hp - s.D.hp) * 2 - (e.hp - s.A.hp);
+    if (s.D.hp <= 0) score += 100;
+    if (s.A.hp <= 0) score -= 80;
+    score -= dist(x, y, e.x, e.y) * 0.01;
+    if (!best || score > best.score) best = { score, p, x, y };
+  }
+  if (best) {
+    await doCombat(e, best.p, best.x, best.y);
+  } else if (!e.guard) {
+    const f = distField(e.move);
+    let pick = [e.x, e.y], pv = f.get(key(e.x, e.y)) ?? Infinity;
+    for (const [x, y] of r) {
+      const v = f.get(key(x, y));
+      if (v !== undefined && v < pv) { pv = v; pick = [x, y]; }
+    }
+    if (pick[0] !== e.x || pick[1] !== e.y) {
+      [e.x, e.y] = pick;
+      updateBoard();
+      await sleep(320);
+    }
+  }
+  e.acted = true;
+  updateBoard();
+  await sleep(140);
+}
+async function enemyPhase() {
+  const b = battle;
+  b.phase = 'enemy';
+  b.busy = true;
+  b.inspect = null;
+  alive('player').forEach(u => u.acted = false);
+  updateBoard();
+  await banner('Enemy Phase', 'foe');
+  for (const e of alive('enemy')) {
+    if (battle !== b || b.over) return;
+    if (e.hp <= 0) continue;
+    await enemyAct(e);
+    if (checkEnd()) return;
+  }
+  if (battle !== b) return;
+  b.turn++;
+  b.phase = 'player';
+  b.units.forEach(u => u.acted = false);
+  updateBoard();
+  await banner('Player Phase');
+  b.busy = false;
+  updateBoard();
+}
+function checkEnd() {
+  const b = battle;
+  if (!b || b.over) return true;
+  const won = !alive('enemy').length, lost = !alive('player').length;
+  if (!won && !lost) return false;
+  b.over = true;
+  b.busy = false;
+  let reward = 0;
+  if (won) {
+    reward = b.map.reward + (save.cleared[b.map.id] ? 0 : 10);
+    save.cleared[b.map.id] = true;
+    save.orbs += reward;
+    persist();
+  }
+  const r = $('#result');
+  r.innerHTML = `<h2>${won ? 'Victory' : 'Defeat'}</h2>
+    <p>${won ? `Cleared in ${b.turn} turn${b.turn > 1 ? 's' : ''}. You earned ◆ ${reward} orbs.` : 'Your team has fallen. Try a different lineup or summon new allies.'}</p>
+    <div class="row-btns"><button class="btn primary" id="resBack">Return to camp</button><button class="btn" id="resRetry">Fight again</button></div>`;
+  r.hidden = false;
+  $('#resBack').onclick = () => { battle = null; render(); };
+  $('#resRetry').onclick = () => startBattle(b.map);
+  updateBoard();
+  return true;
+}
+
+/* ---------- summon ---------- */
+const COSTS = [5, 4, 4, 4, 3];
+let session = null;
+function rollRarity() { const n = Math.random(); return n < 0.06 ? 5 : n < 0.64 ? 4 : 3; }
+function newSession() {
+  const pool = allHeroes();
+  session = { pulls: 0, last: null, note: '', stones: Array.from({ length: 5 }, () => {
+    const h = pool[Math.floor(Math.random() * pool.length)];
+    return { id: h.id, r: rollRarity(), color: COLOR_OF[h.weapon], taken: false };
+  }) };
+}
+function grant(id, r) {
+  const o = save.owned[id];
+  let msg;
+  if (!o) { save.owned[id] = { r, m: 0 }; msg = 'New hero!'; if (save.team.length < 4) save.team.push(id); }
+  else if (r > o.r) { o.r = r; msg = `Rarity raised to ${r}★`; }
+  else if (o.m < 10) { o.m++; msg = `Merged: now +${o.m}`; }
+  else { save.orbs += 1; msg = 'Already fully merged. 1 orb refunded.'; }
+  return msg;
+}
+function renderSummon() {
+  if (!session || session.stones.some(s => !heroById(s.id))) newSession();
+  const cost = COSTS[session.pulls];
+  const last = session.last && heroById(session.last.id);
+  view.innerHTML = `<section class="stack">
+    <div class="sect-h"><h2>Summon</h2><p class="sub">Pick a stone. Its color shows the hero's weapon: red, blue, green, or colorless.</p></div>
+    <div class="altar"><div class="ring">
+      ${session.stones.map((s, i) => `<button class="stone ${s.color}${s.taken ? ' taken' : ''}" data-i="${i}" style="--a:${i * 72 - 90}deg" ${s.taken ? 'disabled' : ''} aria-label="${s.taken ? 'Already summoned' : s.color === 'grey' ? 'Colorless stone' : s.color + ' stone'}"></button>`).join('')}
+      <div class="core">${cost != null ? `<b>${cost}</b><span>orbs per stone</span>` : '<span>All stones taken</span>'}</div>
+    </div></div>
+    <p class="note">${esc(session.note)}</p>
+    <div class="reveal">${last ? `<div class="rcard">${tokenHTML(last)}<div><div class="hc-name">${esc(last.name)} <span class="stars">${stars(session.last.r)}</span></div>
+      <div class="hc-title">${esc(last.title)}</div><div class="hc-meta">${WEAPONS[last.weapon].label} · ${MOVES[last.move].label}</div><div class="msg">${esc(session.last.msg)}</div></div></div>` : ''}</div>
+    ${session.pulls ? '<div class="row-btns"><button class="btn" id="newSess">Start a new session</button></div>' : ''}
+    <p class="sub">Rates: 5★ 6% · 4★ 58% · 3★ 36%. Each stone in a session costs less: 5, 4, 4, 4, 3. Repeat heroes merge for +1 to every stat, up to +10. Heroes you forge join the pool.</p>
+  </section>`;
+  view.querySelectorAll('.stone').forEach(btn => btn.onclick = () => {
+    const s = session.stones[+btn.dataset.i];
+    const c = COSTS[session.pulls];
+    if (save.orbs < c) { session.note = `You need ${c} orbs. Win battles to earn more.`; return renderSummon(); }
+    save.orbs -= c;
+    s.taken = true;
+    session.pulls++;
+    session.last = { id: s.id, r: s.r, msg: grant(s.id, s.r) };
+    session.note = '';
+    persist();
+    renderSummon();
+  });
+  const ns = $('#newSess');
+  if (ns) ns.onclick = () => { newSession(); renderSummon(); };
+}
+
+/* ---------- allies ---------- */
+function renderAllies(msg = '') {
+  const order = { red: 0, blue: 1, green: 2, grey: 3 };
+  const ids = Object.keys(save.owned).filter(heroById).sort((a, b) => {
+    const A = heroById(a), B = heroById(b);
+    return order[COLOR_OF[A.weapon]] - order[COLOR_OF[B.weapon]] || A.name.localeCompare(B.name);
+  });
+  view.innerHTML = `<section class="stack">
+    <div class="sect-h"><h2>Allies</h2><p class="sub">${ids.length} heroes. Tap one to add or remove them from your team of four.</p></div>
+    <div class="slots">${[0, 1, 2, 3].map(i => { const t = heroById(save.team[i] || ''); return `<div class="slot">${t ? tokenHTML(t) + `<span>${esc(t.name)}</span>` : '<span class="empty">Empty</span>'}</div>`; }).join('')}</div>
+    <p class="note">${esc(msg)}</p>
+    <div class="roster">${ids.map(id => {
+      const t = heroById(id), o = save.owned[id], st = statsFor(t, o.r, o.m), slot = save.team.indexOf(id);
+      return `<button class="hcard${slot >= 0 ? ' in' : ''}" data-id="${esc(id)}">${tokenHTML(t)}
+        <div class="hc-body"><div class="hc-name">${esc(t.name)} <span class="stars">${stars(o.r)}</span>${o.m ? `<span class="merge">+${o.m}</span>` : ''}</div>
+        <div class="hc-title">${esc(t.title)}${t.custom ? ' · Forged' : ''}</div>
+        <div class="hc-meta">${WEAPONS[t.weapon].label} · ${MOVES[t.move].label} · ${SPECIALS[t.special].name}</div>
+        <div class="stats">${statRow(st)}</div></div>${slot >= 0 ? `<span class="slotno">${slot + 1}</span>` : ''}</button>`;
+    }).join('')}</div>
+  </section>`;
+  view.querySelectorAll('.hcard').forEach(c => c.onclick = () => {
+    const id = c.dataset.id, i = save.team.indexOf(id);
+    let note = '';
+    if (i >= 0) {
+      if (save.team.length === 1) note = 'Keep at least one hero on your team.';
+      else save.team.splice(i, 1);
+    } else if (save.team.length >= 4) note = 'Your team is full. Tap a team member to remove them first.';
+    else save.team.push(id);
+    persist();
+    const top = view.scrollTop;
+    renderAllies(note);
+    view.scrollTop = top;
+  });
+}
+
+/* ---------- forge ---------- */
+const STAT_LIMITS = { hp: [30, 60], atk: [30, 60], spd: [10, 45], def: [10, 45], res: [10, 45] };
+const budgetFor = move => move === 'armored' ? 188 : 176;
+let draft = { name: 'Wren', title: 'Ashen Wanderer', weapon: 'sword', move: 'infantry', special: 'glimmer', hp: 40, atk: 50, spd: 34, def: 28, res: 24 };
+let forgeNote = '';
+function renderForge() {
+  const opt = (obj, cur, lab = v => v.label) => Object.entries(obj).map(([k, v]) => `<option value="${k}"${k === cur ? ' selected' : ''}>${lab(v)}</option>`).join('');
+  view.innerHTML = `<section class="stack">
+    <div class="sect-h"><h2>Hero Forge</h2><p class="sub">Design your own hero. Forged heroes join your allies at 5★ and can appear in summons.</p></div>
+    <form class="forge" id="forge" autocomplete="off">
+      <div class="preview" id="fprev"></div>
+      <div class="frow">
+        <div class="field"><label for="f-name">Name</label><input id="f-name" maxlength="14" value="${esc(draft.name)}"></div>
+        <div class="field"><label for="f-title">Epithet</label><input id="f-title" maxlength="24" value="${esc(draft.title)}"></div>
+      </div>
+      <div class="frow">
+        <div class="field"><label for="f-weapon">Weapon</label><select id="f-weapon">${opt(WEAPONS, draft.weapon, v => v.label + ' (range ' + v.range + ')')}</select></div>
+        <div class="field"><label for="f-move">Movement</label><select id="f-move">${opt(MOVES, draft.move, v => v.label + ' (' + v.mov + ' move)')}</select></div>
+      </div>
+      <div class="field"><label for="f-special">Special</label><select id="f-special">${opt(SPECIALS, draft.special, v => v.cd ? `${v.name} (${v.cd}): ${v.desc}` : 'None')}</select></div>
+      <span class="slabel">Stats</span>
+      ${Object.entries(STAT_LIMITS).map(([k, [lo, hi]]) => `<div class="srow"><label for="f-${k}">${k === 'hp' ? 'HP' : k[0].toUpperCase() + k.slice(1)}</label>
+        <input type="range" id="f-${k}" min="${lo}" max="${hi}" value="${draft[k]}"><output id="o-${k}">${draft[k]}</output></div>`).join('')}
+      <div class="budget" id="fbudget"></div>
+      <div class="row-btns"><button class="btn primary" id="fsubmit" type="submit">Forge hero</button></div>
+      <p class="note">${esc(forgeNote)}</p>
+    </form>
+    ${save.customs.length ? `<div class="sect-h"><h3>Your forged heroes</h3></div><div class="clist">${save.customs.map(c => `<div class="citem"><div>${tokenHTML(c)}<div><div class="hc-name">${esc(c.name)}</div><div class="hc-title">${esc(c.title)}</div></div></div><button class="btn" data-del="${esc(c.id)}">Delete</button></div>`).join('')}</div>` : ''}
+    <div class="danger-zone"><span class="slabel">Save data</span><p class="sub">Progress is saved in this browser only.</p><div class="row-btns"><button class="btn" id="resetAll">Reset all progress</button></div></div>
+  </section>`;
+  const form = $('#forge');
+  const sync = () => {
+    draft.name = $('#f-name').value.trim();
+    draft.title = $('#f-title').value.trim();
+    draft.weapon = $('#f-weapon').value;
+    draft.move = $('#f-move').value;
+    const spSel = $('#f-special');
+    if (draft.weapon === 'staff') spSel.value = 'none';
+    spSel.disabled = draft.weapon === 'staff';
+    draft.special = spSel.value;
+    for (const k in STAT_LIMITS) { draft[k] = +$('#f-' + k).value; $('#o-' + k).textContent = draft[k]; }
+    const total = Object.keys(STAT_LIMITS).reduce((s, k) => s + draft[k], 0), cap = budgetFor(draft.move);
+    $('#fbudget').innerHTML = `<span>Stat total</span><span class="${total > cap ? 'over' : ''}">${total} / ${cap}${total > cap ? ' · lower some stats' : ''}</span>`;
+    $('#fprev').innerHTML = `${tokenHTML({ name: draft.name || '?', weapon: draft.weapon, move: draft.move })}<div><div class="hc-name">${esc(draft.name || 'Unnamed')} <span class="stars">★★★★★</span></div><div class="hc-title">${esc(draft.title || 'No epithet')}</div></div>`;
+    $('#fsubmit').disabled = total > cap || !draft.name;
+  };
+  form.addEventListener('input', sync);
+  form.addEventListener('submit', e => {
+    e.preventDefault();
+    sync();
+    if ($('#fsubmit').disabled) return;
+    const hero = { ...draft, id: 'c_' + Date.now().toString(36), title: draft.title || 'Forged Hero', custom: true };
+    save.customs.push(hero);
+    save.owned[hero.id] = { r: 5, m: 0 };
+    if (save.team.length < 4) save.team.push(hero.id);
+    persist();
+    forgeNote = `${hero.name} joined your allies at 5★${save.team.includes(hero.id) ? ' and your team' : ''}.`;
+    renderForge();
+    forgeNote = '';
+  });
+  view.querySelectorAll('[data-del]').forEach(btn => btn.onclick = () => {
+    if (!btn.dataset.armed) { btn.dataset.armed = '1'; btn.textContent = 'Tap to confirm'; return; }
+    const id = btn.dataset.del;
+    save.customs = save.customs.filter(c => c.id !== id);
+    delete save.owned[id];
+    save.team = save.team.filter(t => t !== id);
+    if (!save.team.length) save.team = Object.keys(save.owned).filter(heroById).slice(0, 1);
+    persist();
+    renderForge();
+  });
+  $('#resetAll').onclick = e => {
+    if (!e.target.dataset.armed) { e.target.dataset.armed = '1'; e.target.textContent = 'Tap again to erase everything'; return; }
+    save = defaultSave();
+    session = null;
+    persist();
+    renderForge();
+  };
+  sync();
+}
+
+persist();
+render();
+</script>
