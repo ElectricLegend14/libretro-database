@@ -1,6 +1,6 @@
 # Emberfall Heroes
 
-An offline fan game inspired by the tactics of mobile hero-collection RPGs. All characters, names, and art are original, and the game uses no assets from any commercial title.
+An offline fan game inspired by the tactics of mobile hero-collection RPGs, starring a cast of anthropomorphic animal heroes: a fox swordsman, an otter tidecaller, a tortoise knight, a bat stormcaller, and more. You fight rat bandits, croc sellswords, and the Bison Warlord. All characters, names, and art are original, and the game uses no assets from any commercial title.
 
 ## Play
 
@@ -14,7 +14,7 @@ Open `index.html` in any modern browser. It needs no install, server, or interne
 - **Specials** charge each time a unit attacks or is attacked: Glimmer, Moonbow, Luna, Bonfire, Dragon Aura, and Astra.
 - **Summoning:** five colored stones per session cost 5/4/4/4/3 orbs. Rarities are 3★, 4★, and 5★, and duplicate heroes merge for +1 to every stat (up to +10).
 - **Allies:** build a team of four from your barracks.
-- **Hero Forge:** design your own hero (name, weapon, movement type, special, and stats within a budget). Forged heroes join the summon pool.
+- **Hero Forge:** design your own furry hero (name, species, weapon, movement type, special, and stats within a budget). Forged heroes join the summon pool.
 
 ## Customizing
 
@@ -24,6 +24,8 @@ All game data sits at the top of the `<script>` in `index.html`:
 |------------|-----------------------------------------------------------|
 | `ROSTER`   | Summonable heroes and their 5★ stats                      |
 | `FOES`     | Enemy unit templates                                      |
+| `FURS`     | Each hero's and foe's animal species and emoji (and foe display names) |
+| `SPECIES`  | Species you can pick in the Hero Forge                    |
 | `MAPS`     | Terrain rows (`.` plain, `f` forest, `m` mountain, `w` water, `#` wall), starting tiles, enemy placements, and rewards |
 | `SPECIALS` | Special skills and cooldowns (damage math is in `hitDamage`) |
 | `WEAPONS`, `MOVES` | Weapon ranges and types, movement types           |

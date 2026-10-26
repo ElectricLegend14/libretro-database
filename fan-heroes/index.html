@@ -90,6 +90,9 @@ main {
 .tok.green { background: radial-gradient(circle at 35% 30%, var(--gold-hi) -60%, var(--green) 60%); }
 .tok.grey { background: radial-gradient(circle at 35% 30%, var(--gold-hi) -60%, var(--grey) 60%); }
 .tok .ini { font-family: var(--display); font-weight: 700; font-size: .95rem; color: var(--night); }
+.tok .emo { font-size: 1.4rem; line-height: 1; filter: drop-shadow(0 1px 0 var(--shade)); }
+.unit .tok .emo { font-size: clamp(1rem, 5.6vw, 1.75rem); }
+.rcard .tok .emo, .preview .tok .emo { font-size: 1.9rem; }
 .tok .mv { position: absolute; right: -6px; bottom: -6px; width: 17px; height: 17px; border-radius: 50%; background: var(--night); color: var(--gold-hi); font-size: 10px; font-weight: 700; display: grid; place-items: center; border: 1px solid var(--gold); }
 .stars { color: var(--gold-hi); font-size: .8rem; letter-spacing: .05em; }
 .merge { color: var(--green); font-weight: 700; font-size: .85rem; margin-left: 4px; }
@@ -340,17 +343,34 @@ const FOES = {
   warlord:     { name: 'Cinder Warlord', weapon: 'axe',       move: 'armored',  special: 'bonfire', hp: 62, atk: 54, spd: 22, def: 42, res: 20 },
 };
 
+// Every hero and foe is an anthropomorphic animal: [emoji, species, display name for foes].
+const FURS = {
+  aldric: ['🦊', 'Fox'], seren: ['🦦', 'Otter'], brannoc: ['🐻', 'Bear'], lyra: ['🦉', 'Owl'],
+  kestrel: ['🐇', 'Hare'], mira: ['🐑', 'Sheep'], torvin: ['🦌', 'Stag'], ysolde: ['🐆', 'Snow Leopard'],
+  corvin: ['🦝', 'Raccoon'], rhea: ['🦁', 'Lioness'], garrick: ['🐢', 'Tortoise'], fenna: ['🦅', 'Eagle'],
+  darius: ['🐎', 'Stallion'], elowen: ['🦋', 'Moth'], vex: ['🦇', 'Bat'], hollis: ['🐺', 'Wolf'],
+  bandit: ['🐀', 'Rat', 'Rat Bandit'], pikeman: ['🐗', 'Boar', 'Boar Pikeman'], merc: ['🐊', 'Crocodile', 'Croc Sellsword'],
+  archer: ['🦨', 'Skunk', 'Skunk Archer'], firemage: ['🦎', 'Salamander', 'Salamander Adept'], thundermage: ['🐸', 'Toad', 'Toad Storm Adept'],
+  windmage: ['🐦', 'Magpie', 'Magpie Gale Adept'], wyvern: ['🐲', 'Drake', 'Drake Raider'], knight: ['🦏', 'Rhino', 'Rhino Warden'],
+  cavalier: ['🐂', 'Bull', 'Bull Outrider'], cleric: ['🐐', 'Goat', 'Goat Priest'], warlord: ['🐃', 'Bison', 'Bison Warlord'],
+};
+for (const h of ROSTER) [h.emoji, h.species] = FURS[h.id];
+for (const [k, f] of Object.entries(FOES)) [f.emoji, f.species, f.name] = FURS[k];
+const SPECIES = [['🦊', 'Fox'], ['🐺', 'Wolf'], ['🐱', 'Cat'], ['🐶', 'Dog'], ['🐰', 'Rabbit'], ['🐻', 'Bear'], ['🦝', 'Raccoon'], ['🦦', 'Otter'],
+  ['🦌', 'Deer'], ['🐯', 'Tiger'], ['🦁', 'Lion'], ['🐲', 'Dragon'], ['🦉', 'Owl'], ['🦇', 'Bat'], ['🐴', 'Horse'], ['🐭', 'Mouse'],
+  ['🦨', 'Skunk'], ['🐼', 'Panda'], ['🐨', 'Koala'], ['🐮', 'Cow'], ['🐷', 'Pig'], ['🐸', 'Frog'], ['🦈', 'Shark'], ['🦖', 'Dinosaur']];
+
 // terrain rows top to bottom. foes: [type, x, y, 'guard'?] where guard waits until a hero comes in reach.
 const MAPS = [
-  { id: 'm1', name: 'Ashford Crossing', tier: 'Normal', power: 0, reward: 6, blurb: 'a river ford held by brigands',
+  { id: 'm1', name: 'Ashford Crossing', tier: 'Normal', power: 0, reward: 6, blurb: 'a river ford held by rat brigands',
     terrain: ['..f...', '.w..m.', '.w....', '...f..', '......', '..ww..', 'f.....', '......'],
     starts: [[1, 7], [2, 7], [3, 7], [4, 7]],
     foes: [['bandit', 0, 1], ['pikeman', 5, 1], ['merc', 2, 0], ['archer', 3, 0]] },
-  { id: 'm2', name: 'Hollow Pines', tier: 'Hard', power: 4, reward: 9, blurb: 'an ambush in deep woods',
+  { id: 'm2', name: 'Hollow Pines', tier: 'Hard', power: 4, reward: 9, blurb: 'a croc-led ambush in deep woods',
     terrain: ['f..ff.', 'f.....', '..ff.m', '......', 'm.f..f', '..f...', '......', 'f....f'],
     starts: [[1, 7], [2, 6], [3, 6], [4, 7]],
     foes: [['wyvern', 5, 0], ['firemage', 1, 1], ['knight', 2, 0], ['merc', 4, 1], ['cleric', 0, 0]] },
-  { id: 'm3', name: 'Cinder Keep', tier: 'Lunatic', power: 8, reward: 14, blurb: 'the Warlord’s walled hall',
+  { id: 'm3', name: 'Cinder Keep', tier: 'Lunatic', power: 8, reward: 14, blurb: 'the Bison Warlord’s walled hall',
     terrain: ['#....#', '#.##.#', '......', '.#..#.', '......', 'w.ff.w', 'w....w', '......'],
     starts: [[1, 7], [2, 7], [3, 7], [4, 7]],
     foes: [['warlord', 2, 0, 'guard'], ['thundermage', 1, 0], ['wyvern', 4, 0], ['windmage', 5, 2], ['cavalier', 3, 2], ['archer', 0, 2]] },
@@ -401,7 +421,8 @@ function statsFor(tpl, r = 5, m = 0) {
   return o;
 }
 function tokenHTML(t) {
-  return `<span class="tok ${COLOR_OF[t.weapon]}"><span class="ini">${esc(initials(t.name))}</span><span class="mv">${MOVES[t.move].glyph}</span></span>`;
+  const face = t.emoji ? `<span class="emo" aria-hidden="true">${esc(t.emoji)}</span>` : `<span class="ini">${esc(initials(t.name))}</span>`;
+  return `<span class="tok ${COLOR_OF[t.weapon]}">${face}<span class="mv">${MOVES[t.move].glyph}</span></span>`;
 }
 function statRow(st) {
   return ['hp', 'atk', 'spd', 'def', 'res'].map(k => `<span><b>${k === 'hp' ? 'HP' : k[0].toUpperCase() + k.slice(1)}</b>${st[k]}</span>`).join('');
@@ -464,7 +485,7 @@ let unitEls = new Map();
 
 function makeUnit(tpl, st, side, [x, y], uid, rarity) {
   const special = tpl.special || 'none';
-  return { uid, side, name: tpl.name, weapon: tpl.weapon, move: tpl.move, special, rarity,
+  return { uid, side, name: tpl.name, weapon: tpl.weapon, move: tpl.move, special, rarity, emoji: tpl.emoji, species: tpl.species,
     hp: st.hp, maxHp: st.hp, atk: st.atk, spd: st.spd, def: st.def, res: st.res,
     x, y, cd: SPECIALS[special].cd, acted: false, guard: false };
 }
@@ -692,7 +713,7 @@ function unitCard(u) {
     : W.staff ? `Assist: Heal restores ${HEAL_AMOUNT} HP to an adjacent ally.` : 'No special skill.';
   return `<div class="ucard"><div class="uc-top">${tokenHTML(u)}
     <div><div class="uc-name">${esc(u.name)} ${u.side === 'player' && u.rarity ? `<span class="stars">${stars(u.rarity)}</span>` : ''}</div>
-    <div class="hc-meta">${u.side === 'enemy' ? 'Foe · ' : ''}${W.label} · range ${W.range} · ${MOVES[u.move].label}${u.guard ? ' · Holding position' : ''}</div></div>
+    <div class="hc-meta">${u.side === 'enemy' ? 'Foe · ' : ''}${u.species ? esc(u.species) + ' · ' : ''}${W.label} · range ${W.range} · ${MOVES[u.move].label}${u.guard ? ' · Holding position' : ''}</div></div>
     <div class="uc-hp"><b>${u.hp}</b>/${u.maxHp}</div></div>
     <div class="stats">${statRow({ hp: u.maxHp, atk: u.atk, spd: u.spd, def: u.def, res: u.res })}</div>
     <div class="hc-meta">${skill}</div></div>`;
@@ -993,7 +1014,7 @@ function renderSummon() {
     </div></div>
     <p class="note">${esc(session.note)}</p>
     <div class="reveal">${last ? `<div class="rcard">${tokenHTML(last)}<div><div class="hc-name">${esc(last.name)} <span class="stars">${stars(session.last.r)}</span></div>
-      <div class="hc-title">${esc(last.title)}</div><div class="hc-meta">${WEAPONS[last.weapon].label} · ${MOVES[last.move].label}</div><div class="msg">${esc(session.last.msg)}</div></div></div>` : ''}</div>
+      <div class="hc-title">${esc(last.title)}</div><div class="hc-meta">${last.species ? esc(last.species) + ' · ' : ''}${WEAPONS[last.weapon].label} · ${MOVES[last.move].label}</div><div class="msg">${esc(session.last.msg)}</div></div></div>` : ''}</div>
     ${session.pulls ? '<div class="row-btns"><button class="btn" id="newSess">Start a new session</button></div>' : ''}
     <p class="sub">Rates: 5★ 6% · 4★ 58% · 3★ 36%. Each stone in a session costs less: 5, 4, 4, 4, 3. Repeat heroes merge for +1 to every stat, up to +10. Heroes you forge join the pool.</p>
   </section>`;
@@ -1029,7 +1050,7 @@ function renderAllies(msg = '') {
       return `<button class="hcard${slot >= 0 ? ' in' : ''}" data-id="${esc(id)}">${tokenHTML(t)}
         <div class="hc-body"><div class="hc-name">${esc(t.name)} <span class="stars">${stars(o.r)}</span>${o.m ? `<span class="merge">+${o.m}</span>` : ''}</div>
         <div class="hc-title">${esc(t.title)}${t.custom ? ' · Forged' : ''}</div>
-        <div class="hc-meta">${WEAPONS[t.weapon].label} · ${MOVES[t.move].label} · ${SPECIALS[t.special].name}</div>
+        <div class="hc-meta">${t.species ? esc(t.species) + ' · ' : ''}${WEAPONS[t.weapon].label} · ${MOVES[t.move].label} · ${SPECIALS[t.special].name}</div>
         <div class="stats">${statRow(st)}</div></div>${slot >= 0 ? `<span class="slotno">${slot + 1}</span>` : ''}</button>`;
     }).join('')}</div>
   </section>`;
@@ -1051,12 +1072,12 @@ function renderAllies(msg = '') {
 /* ---------- forge ---------- */
 const STAT_LIMITS = { hp: [30, 60], atk: [30, 60], spd: [10, 45], def: [10, 45], res: [10, 45] };
 const budgetFor = move => move === 'armored' ? 188 : 176;
-let draft = { name: 'Wren', title: 'Ashen Wanderer', weapon: 'sword', move: 'infantry', special: 'glimmer', hp: 40, atk: 50, spd: 34, def: 28, res: 24 };
+let draft = { name: 'Wren', title: 'Ashen Wanderer', emoji: '🐺', species: 'Wolf', weapon: 'sword', move: 'infantry', special: 'glimmer', hp: 40, atk: 50, spd: 34, def: 28, res: 24 };
 let forgeNote = '';
 function renderForge() {
   const opt = (obj, cur, lab = v => v.label) => Object.entries(obj).map(([k, v]) => `<option value="${k}"${k === cur ? ' selected' : ''}>${lab(v)}</option>`).join('');
   view.innerHTML = `<section class="stack">
-    <div class="sect-h"><h2>Hero Forge</h2><p class="sub">Design your own hero. Forged heroes join your allies at 5★ and can appear in summons.</p></div>
+    <div class="sect-h"><h2>Hero Forge</h2><p class="sub">Design your own furry hero. Forged heroes join your allies at 5★ and can appear in summons.</p></div>
     <form class="forge" id="forge" autocomplete="off">
       <div class="preview" id="fprev"></div>
       <div class="frow">
@@ -1067,6 +1088,7 @@ function renderForge() {
         <div class="field"><label for="f-weapon">Weapon</label><select id="f-weapon">${opt(WEAPONS, draft.weapon, v => v.label + ' (range ' + v.range + ')')}</select></div>
         <div class="field"><label for="f-move">Movement</label><select id="f-move">${opt(MOVES, draft.move, v => v.label + ' (' + v.mov + ' move)')}</select></div>
       </div>
+      <div class="field"><label for="f-species">Species</label><select id="f-species">${SPECIES.map(([e, n], i) => `<option value="${i}"${n === draft.species ? ' selected' : ''}>${e} ${n}</option>`).join('')}</select></div>
       <div class="field"><label for="f-special">Special</label><select id="f-special">${opt(SPECIALS, draft.special, v => v.cd ? `${v.name} (${v.cd}): ${v.desc}` : 'None')}</select></div>
       <span class="slabel">Stats</span>
       ${Object.entries(STAT_LIMITS).map(([k, [lo, hi]]) => `<div class="srow"><label for="f-${k}">${k === 'hp' ? 'HP' : k[0].toUpperCase() + k.slice(1)}</label>
@@ -1084,6 +1106,7 @@ function renderForge() {
     draft.title = $('#f-title').value.trim();
     draft.weapon = $('#f-weapon').value;
     draft.move = $('#f-move').value;
+    [draft.emoji, draft.species] = SPECIES[+$('#f-species').value];
     const spSel = $('#f-special');
     if (draft.weapon === 'staff') spSel.value = 'none';
     spSel.disabled = draft.weapon === 'staff';
@@ -1091,7 +1114,7 @@ function renderForge() {
     for (const k in STAT_LIMITS) { draft[k] = +$('#f-' + k).value; $('#o-' + k).textContent = draft[k]; }
     const total = Object.keys(STAT_LIMITS).reduce((s, k) => s + draft[k], 0), cap = budgetFor(draft.move);
     $('#fbudget').innerHTML = `<span>Stat total</span><span class="${total > cap ? 'over' : ''}">${total} / ${cap}${total > cap ? ' · lower some stats' : ''}</span>`;
-    $('#fprev').innerHTML = `${tokenHTML({ name: draft.name || '?', weapon: draft.weapon, move: draft.move })}<div><div class="hc-name">${esc(draft.name || 'Unnamed')} <span class="stars">★★★★★</span></div><div class="hc-title">${esc(draft.title || 'No epithet')}</div></div>`;
+    $('#fprev').innerHTML = `${tokenHTML({ name: draft.name || '?', emoji: draft.emoji, weapon: draft.weapon, move: draft.move })}<div><div class="hc-name">${esc(draft.name || 'Unnamed')} <span class="stars">★★★★★</span></div><div class="hc-title">${esc(draft.title || 'No epithet')} · ${esc(draft.species)}</div></div>`;
     $('#fsubmit').disabled = total > cap || !draft.name;
   };
   form.addEventListener('input', sync);
