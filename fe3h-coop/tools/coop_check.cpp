@@ -144,6 +144,12 @@ int main(int argc, char** argv) {
             }
             std::cout << "\n";
         }
+        if (hooks.characterIdField.set) {
+            char field[64];
+            std::snprintf(field, sizeof field, "  [x] character id field  (unit+0x%X, %d bytes)\n",
+                          unsigned(hooks.characterIdField.offset), hooks.characterIdField.size);
+            std::cout << field;
+        }
         printList("Warnings:", hooks.warnings);
     }
 

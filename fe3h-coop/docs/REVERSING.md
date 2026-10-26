@@ -83,8 +83,18 @@ Returns which character a battle unit is (an `int` id).
    one `ldr w0, [x0, #offset]` and a `ret`. Use *Search → For Scalars* with the
    field offset to find candidates.
 
-If the game never calls such a function (it's often inlined), tell me the
-field's offset inside the unit. The mod can read the field directly instead.
+If the game never calls such a function (small ones like this often get
+folded into their callers), skip `unit_character_id` and tell the mod where
+the id sits inside the unit instead:
+
+```ini
+[units]
+character_id_field = 0x24   ; bytes from the start of the unit
+character_id_size = 2       ; 1, 2 or 4 bytes
+```
+
+The start of the unit is the address `can_select_unit` receives as its first
+argument (`x0` in Ghidra/the debugger).
 
 ### can_select_unit
 

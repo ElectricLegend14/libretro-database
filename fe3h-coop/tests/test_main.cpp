@@ -271,6 +271,19 @@ static void testHookTargets() {
     coop::HookTarget misaligned{"can_select_unit", coop::HookTarget::Kind::Offset, 0x102, {}, 1};
     CHECK(!coop::resolveHook(misaligned, text, sizeof text, base).ok);
 
+    // [units] field fallback for an inlined character-id getter.
+    auto units = coop::parseHookTargets("[units]\ncharacter_id_field = 0x6\ncharacter_id_size = 2\n");
+    CHECK(units.characterIdField.set && units.characterIdField.offset == 6 && units.characterIdField.size == 2);
+    CHECK(units.warnings.empty());
+    const uint8_t unit[8] = {0, 0, 0, 0, 0, 0, 0x34, 0x12};
+    CHECK(coop::readField(unit, units.characterIdField) == 0x1234);
+    CHECK(coop::readField(unit, {true, 6, 1}) == 0x34);
+    auto badUnits = coop::parseHookTargets("[units]\ncharacter_id_field = 0x6\ncharacter_id_size = 3\nhp = 1\n");
+    CHECK(badUnits.characterIdField.set && badUnits.characterIdField.size == 2);
+    CHECK(hasMessage(badUnits.warnings, "character_id_size must be 1, 2 or 4"));
+    CHECK(hasMessage(badUnits.warnings, "unknown option 'hp'"));
+    CHECK(!coop::parseHookTargets("[units]\ncharacter_id_field = lots\n").characterIdField.set);
+
     std::ifstream in(COOP_SAMPLE_OFFSETS);
     std::stringstream ss;
     ss << in.rdbuf();

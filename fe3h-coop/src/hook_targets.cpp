@@ -46,7 +46,30 @@ HookTargetsResult parseHookTargets(std::string_view text) {
     };
 
     for (const auto& [section, values] : ini.sections) {
-        if (section != "hooks") result.warnings.push_back("unknown section [" + section + "]");
+        if (section != "hooks" && section != "units") result.warnings.push_back("unknown section [" + section + "]");
+    }
+
+    // [units]: where the character id sits inside a unit, for when the game
+    // has no separate function for it.
+    auto& units = ini.sections["units"];
+    for (const auto& [key, entry] : units) {
+        if (key != "character_id_field" && key != "character_id_size") warn(entry.line, "unknown option '" + key + "'");
+    }
+    if (auto it = units.find("character_id_field"); it != units.end() && !it->second.value.empty()) {
+        uint64_t field = 0;
+        if (!parseHex(it->second.value, field) || field > 0xFFFF) {
+            warn(it->second.line, "character_id_field: expected a hex offset like 0x24");
+        } else {
+            result.characterIdField = {true, uint32_t(field), 2};
+            if (auto sz = units.find("character_id_size"); sz != units.end() && !sz->second.value.empty()) {
+                const auto& v = sz->second.value;
+                if (v == "1" || v == "2" || v == "4") {
+                    result.characterIdField.size = v[0] - '0';
+                } else {
+                    warn(sz->second.line, "character_id_size must be 1, 2 or 4 (bytes)");
+                }
+            }
+        }
     }
 
     for (const auto& [name, entry] : ini.sections["hooks"]) {
@@ -82,6 +105,13 @@ HookTargetsResult parseHookTargets(std::string_view text) {
         result.targets.push_back(std::move(t));
     }
     return result;
+}
+
+uint32_t readField(const void* base, const FieldLocation& field) {
+    const auto* p = static_cast<const uint8_t*>(base) + field.offset;
+    uint32_t value = 0;
+    for (int i = 0; i < field.size; ++i) value |= uint32_t(p[i]) << (8 * i);
+    return value;
 }
 
 ResolvedHook resolveHook(const HookTarget& t, const uint8_t* text, size_t textSize, uint64_t textOffset) {

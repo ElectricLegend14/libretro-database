@@ -7,7 +7,8 @@
 //   ZL + ZR + Plus.
 //
 // What switches on once you fill in offsets.ini (see docs/REVERSING.md):
-//   can_select_unit + unit_character_id  ->  players can only pick up their own units
+//   can_select_unit + unit_character_id (or [units] character_id_field)
+//                                        ->  players can only pick up their own units
 //   begin_player_phase + end_player_phase  ->  End Turn hands over to the next player
 //
 // Game-function callbacks take three extra u64 arguments and pass them on
@@ -195,9 +196,13 @@ HOOK_DEFINE_TRAMPOLINE(JoyDualState) {
 
 using CharacterIdFn = int (*)(void* unit, u64, u64, u64);
 CharacterIdFn g_unitCharacterId = nullptr;
+coop::FieldLocation g_characterIdField;  // used when there's no function to call
+
+bool knowsCharacters() { return g_unitCharacterId || g_characterIdField.set; }
 
 std::string characterOf(void* unit) {
-    return coop::characterNameForGameId(g_unitCharacterId(unit, 0, 0, 0));
+    int id = g_unitCharacterId ? g_unitCharacterId(unit, 0, 0, 0) : int(coop::readField(unit, g_characterIdField));
+    return coop::characterNameForGameId(id);
 }
 
 // Log each unmapped character id once, so pressing A on every unit tells you
@@ -213,7 +218,7 @@ void reportUnmapped(const std::string& name) {
 
 HOOK_DEFINE_TRAMPOLINE(CanSelectUnit) {
     static bool Callback(void* unit, u64 a1, u64 a2, u64 a3) {
-        if (g_unitCharacterId) {
+        if (knowsCharacters()) {
             auto name = characterOf(unit);
             reportUnmapped(name);
             if (!g_state->canSelect(name)) return false;
@@ -247,6 +252,11 @@ HOOK_DEFINE_TRAMPOLINE(EndPlayerPhase) {
 void installGameHooks(const std::string& text) {
     auto parsed = coop::parseHookTargets(text);
     for (const auto& w : parsed.warnings) Logging.Log("[coop] offsets.ini %s", w.c_str());
+    g_characterIdField = parsed.characterIdField;
+    if (g_characterIdField.set) {
+        Logging.Log("[coop] reading character ids from unit+0x%x (%d bytes)", unsigned(g_characterIdField.offset),
+                    g_characterIdField.size);
+    }
 
     const auto& mod = exl::util::GetMainModuleInfo();
     const auto* code = reinterpret_cast<const uint8_t*>(mod.m_Text.m_Start);

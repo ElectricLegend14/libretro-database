@@ -10,8 +10,8 @@ Only use this with a copy of the game you own.
 | Feature | Status |
 | --- | --- |
 | Settings file, picker page, `coop_check` | Done and tested |
-| **Controller relay**: the active player's controller drives the game, ZL + ZR + Plus passes the turn | Written, **not yet tried in the game** |
-| Players can only pick up their own units | Needs `can_select_unit` + `unit_character_id` in offsets.ini |
+| **Controller relay**: the active player's controller drives the game, ZL + ZR + Plus passes the turn | Builds in CI, **not yet tried in the game** |
+| Players can only pick up their own units | Needs `can_select_unit` + `unit_character_id` (or `[units] character_id_field`) in offsets.ini |
 | End Turn hands over to the next player | Needs `begin_player_phase` + `end_player_phase` |
 | Character names instead of `#id`s | Needs the ids mapped ([docs/REVERSING.md](docs/REVERSING.md), step 6) |
 | Claiming during battle prep, colored cursor and rings | Hooks not written yet |
@@ -28,7 +28,11 @@ Only use this with a copy of the game you own.
 
    Edit `config/coop.ini` by hand, or use the picker page (`tools/picker.html`).
 
-2. **Build the Switch module.** Install [devkitPro](https://devkitpro.org/wiki/Getting_Started)
+2. **Get the Switch module.** The easiest way: open the latest *FE3H co-op mod*
+   run under the repo's **Actions** tab and download the `fe3h-coop` artifact.
+   It's already laid out for Ryujinx and for the SD card (see `INSTALL.txt` inside).
+
+   To build it yourself instead, install [devkitPro](https://devkitpro.org/wiki/Getting_Started)
    (devkitA64 + libnx), then:
 
    ```sh

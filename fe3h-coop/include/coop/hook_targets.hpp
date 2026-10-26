@@ -39,8 +39,25 @@ struct KnownHook {
 // Every hook name the mod understands, with a hint for finding it.
 const std::vector<KnownHook>& knownHooks();
 
+// Where a unit's character id lives inside the unit's data:
+//
+//   [units]
+//   character_id_field = 0x24   ; byte offset from the start of the unit
+//   character_id_size = 2       ; 1, 2 or 4 bytes (default 2)
+//
+// Used when the game has no separate function for unit_character_id.
+struct FieldLocation {
+    bool set = false;
+    uint32_t offset = 0;
+    int size = 2;
+};
+
+// Read a little-endian field of `field.size` bytes at `base + field.offset`.
+uint32_t readField(const void* base, const FieldLocation& field);
+
 struct HookTargetsResult {
     std::vector<HookTarget> targets;
+    FieldLocation characterIdField;
     std::vector<std::string> warnings;
 };
 
