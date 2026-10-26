@@ -125,6 +125,7 @@ struct Pair {
     SessionConfig c;
     c.gameBuild = build;
     c.playerName = name;
+    c.timeoutSec = 5;  // the timeout tests below are written against 5 s
     c.log = [&log](const std::string& line) { log.push_back(line); };
     return c;
   }
@@ -261,6 +262,9 @@ TEST(config_parses_ini) {
   auto saves = parseConfig("save_dir = C:\\Users\\me\\Saves\nbackup_keep = 3\n", error);
   CHECK(saves && saves->saveDir == "C:\\Users\\me\\Saves" && saves->backupKeep == 3);
   CHECK(!parseConfig("backup_keep = lots\n", error));
+  auto timeout = parseConfig("timeout_sec = 20\n", error);
+  CHECK(timeout && timeout->session.timeoutSec == 20);
+  CHECK(!parseConfig("timeout_sec = 1\n", error));
 
   CHECK(!parseConfig("role = guest\n", error));  // guest needs an address
   CHECK(!parseConfig("role = spectator\n", error));
@@ -1235,6 +1239,49 @@ TEST(gifts_arrive_exactly_once_on_a_bad_network) {
   std::vector<uint16_t> want(40);
   for (int i = 0; i < 40; ++i) want[i] = static_cast<uint16_t>(i);
   CHECK(got == want && p.hostGame.inventory().empty());
+}
+
+// Remembers every datagram sent through it.
+class Recorder : public ITransport {
+ public:
+  explicit Recorder(std::unique_ptr<ITransport> inner) : inner_(std::move(inner)) {}
+  std::vector<std::vector<uint8_t>> sent;
+  bool sendTo(const Endpoint& to, const std::vector<uint8_t>& data) override {
+    sent.push_back(data);
+    return inner_->sendTo(to, data);
+  }
+  std::optional<Datagram> receive() override { return inner_->receive(); }
+  uint16_t localPort() const override { return inner_->localPort(); }
+  void advance(double now) override { inner_->advance(now); }
+
+ private:
+  std::unique_ptr<ITransport> inner_;
+};
+
+TEST(a_late_copy_of_an_old_hello_doesnt_reset_the_session) {
+  Pair p;
+  p.guest.reset();
+  auto rec = std::make_unique<Recorder>(p.net.open(Pair::kGuestPort));
+  Recorder* recorder = rec.get();
+  p.guest = createGuest(p.guestGame, p.config(7, p.guestLog, "Guest"), std::move(rec), MemoryNet::at(Pair::kHostPort));
+  p.run(1);
+  auto oldHello = recorder->sent.front();  // the first connection's Hello
+  CHECK(std::holds_alternative<Hello>(*decodeMessage(oldHello.data() + 4, oldHello.size() - 4)));
+
+  // The guest restarts (new nonce), then the network delivers a stale copy
+  // of the first connection's Hello.
+  p.guest = createGuest(p.guestGame, p.config(7, p.guestLog, "Guest"), p.net.open(Pair::kGuestPort),
+                        MemoryNet::at(Pair::kHostPort));
+  p.run(1);
+  auto spoof = MemoryNet::Port(p.net, Pair::kGuestPort);
+  spoof.sendTo(MemoryNet::at(Pair::kHostPort), oldHello);
+  p.run(1);
+  p.guest->sendChat("still here");
+  p.run(1);
+  int joins = 0;
+  for (auto& line : p.hostLog) joins += line.find("joined from") != std::string::npos ? 1 : 0;
+  CHECK(joins == 2);  // the first connection and the restart, not the stale copy
+  CHECK(contains(p.hostLog, "Guest: still here"));
 }
 
 }  // namespace

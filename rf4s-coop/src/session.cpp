@@ -1,6 +1,7 @@
 #include "coop/session.hpp"
 
 #include <algorithm>
+#include <deque>
 #include <map>
 #include <random>
 #include <set>
@@ -247,11 +248,16 @@ class HostSession final : public Session, Peer {
     if (conn_ && conn_->peer() != from) return reject("Session is full");
     if (hello.modVersion != kModVersion) return reject("Mod version mismatch");
     if (hello.gameBuild != cfg_.gameBuild) return reject("Game version mismatch");
+    // A late copy of a Hello from an earlier connection: ignore it, or it
+    // would reset the connection that replaced it.
+    if (std::find(retiredNonces_.begin(), retiredNonces_.end(), hello.nonce) != retiredNonces_.end()) return;
 
     if (!conn_ || hello.nonce != guestNonce_) {
       // A new guest, or the same one starting over: begin a fresh connection.
       if (conn_) disconnect(std::nullopt);
       conn_.emplace(*transport_, from);
+      if (guestNonce_ != 0) retiredNonces_.push_back(guestNonce_);
+      if (retiredNonces_.size() > kRetiredNonces) retiredNonces_.pop_front();
       guestNonce_ = hello.nonce;
       guestName_ = hello.name;
       lastHeard_ = now;
@@ -368,7 +374,10 @@ class HostSession final : public Session, Peer {
     farmKnown_.clear();
   }
 
+  static constexpr size_t kRetiredNonces = 16;
+
   uint32_t guestNonce_ = 0;
+  std::deque<uint32_t> retiredNonces_;
   std::string guestName_;
   std::map<uint32_t, EntityState> known_;  // what the guest has been told exists
   std::set<uint32_t> pickedUp_;

@@ -21,7 +21,7 @@ struct SessionConfig {
   uint32_t gameBuild = 0;        // both sides must match
   double tickRate = 20;          // state packets per second
   double interpDelayTicks = 2;   // draw the partner this far in the past
-  double timeoutSec = 5;
+  double timeoutSec = 10;        // long enough to ride out a loading screen
   double leashSec = 10;          // guest only
   std::function<void(const std::string&)> log;
   std::function<void()> onHostSleep;  // guest only: the host went to bed (save now)

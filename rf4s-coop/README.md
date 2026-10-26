@@ -108,6 +108,7 @@ host_address = 1.2.3.4 # guest only
 name = Lest
 save_dir = C:\path\to\RF4S\saves   # backed up to save-backups\ before each session
 backup_keep = 5        # 0 turns backups off
+timeout_sec = 10       # how long a silent partner is waited for (2-120)
 ```
 
 Both players need the same game version. The log prints its build ID, which the host
