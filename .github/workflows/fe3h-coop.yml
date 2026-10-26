@@ -1,0 +1,72 @@
+name: FE3H co-op mod
+
+on:
+  push:
+    paths:
+      - "fe3h-coop/**"
+      - ".github/workflows/fe3h-coop.yml"
+  pull_request:
+    paths:
+      - "fe3h-coop/**"
+      - ".github/workflows/fe3h-coop.yml"
+  workflow_dispatch:
+
+jobs:
+  core:
+    name: Desktop tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: |
+          cmake -S fe3h-coop -B build -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_CXX_FLAGS="-Werror -fsanitize=address,undefined -fno-sanitize-recover=all"
+          cmake --build build -j
+      - name: Test
+        run: ./build/coop_tests
+      - name: Check example config
+        run: ./build/coop_check fe3h-coop/config/coop.ini fe3h-coop/config/offsets.ini fe3h-coop/tests/data/sample.nso
+
+  switch:
+    name: Switch module
+    runs-on: ubuntu-latest
+    container: devkitpro/devkita64:latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build helpers
+        run: |
+          command -v python3 >/dev/null && command -v git >/dev/null || {
+            apt-get update && apt-get install -y --no-install-recommends python3 git
+          }
+      - name: Build
+        run: ./fe3h-coop/switch/build.sh
+      - name: Package
+        run: |
+          set -e
+          TID=010055D009F78000
+          DEPLOY=fe3h-coop/switch/exlaunch/deploy
+          OUT=package
+          # Switch SD card (Atmosphère)
+          mkdir -p $OUT/switch-sd/atmosphere/contents/$TID/exefs $OUT/switch-sd/config/fe3h-coop
+          cp $DEPLOY/subsdk9 $DEPLOY/main.npdm $OUT/switch-sd/atmosphere/contents/$TID/exefs/
+          cp fe3h-coop/config/coop.ini fe3h-coop/config/offsets.ini $OUT/switch-sd/config/fe3h-coop/
+          # Ryujinx data folder
+          mkdir -p $OUT/ryujinx/mods/contents/$TID/fe3h-coop/exefs $OUT/ryujinx/sdcard/config/fe3h-coop
+          cp $DEPLOY/subsdk9 $DEPLOY/main.npdm $OUT/ryujinx/mods/contents/$TID/fe3h-coop/exefs/
+          cp fe3h-coop/config/coop.ini fe3h-coop/config/offsets.ini $OUT/ryujinx/sdcard/config/fe3h-coop/
+          cat > $OUT/INSTALL.txt <<'EOF'
+          FE3H co-op mod (development build)
+
+          Ryujinx: copy the contents of ryujinx/ into your Ryujinx data folder
+            (File > Open Ryujinx Folder).
+          Switch:  copy the contents of switch-sd/ to the root of your SD card.
+
+          Then edit config/fe3h-coop/coop.ini (or make one with tools/picker.html).
+          In game: hold ZL + ZR and press Plus to pass the turn.
+          If the game won't start, delete main.npdm and keep only subsdk9.
+          EOF
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fe3h-coop
+          path: package/
+          if-no-files-found: error
