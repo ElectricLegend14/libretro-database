@@ -1363,6 +1363,20 @@ TEST(layoutcheck_reads_an_executable_from_disk) {
   CHECK(!parsePe(std::vector<uint8_t>(file.begin(), file.begin() + 0x100), error));
 }
 
+TEST(guest_farm_requests_are_rate_limited) {
+  Arena a;
+  a.hostGame.createFarm(8);
+  a.run(1);
+  for (uint8_t x = 0; x < 3; ++x) {
+    for (uint8_t y = 0; y < 3; ++y) a.guestGame.queueFarm({FarmAction::Till, SimGame::kFieldId, x, y, 0});
+  }
+  for (int i = 0; i < 30; ++i) a.guestGame.queueFarm({FarmAction::Water, SimGame::kFieldId, 1, 1, 0});
+  a.settle();
+  int tilled = 0;
+  for (auto& [key, t] : a.hostGame.farm()) tilled += t.soil != Soil::Untilled ? 1 : 0;
+  CHECK(tilled == 6);  // the burst; the rest of the flood was turned down
+}
+
 }  // namespace
 
 int main() {

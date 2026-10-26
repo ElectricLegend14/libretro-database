@@ -21,6 +21,24 @@ constexpr float kMaxAttackDrift = 4;  // attack origin vs. last reported positio
 constexpr float kPickupRange = 3;
 constexpr double kAttacksPerSec = 8;
 constexpr double kAttackBurst = 4;
+constexpr double kFarmActionsPerSec = 6;  // faster than anyone can swing a hoe
+constexpr double kFarmBurst = 6;
+
+// Allows `rate` actions a second on average, with bursts of up to `burst`.
+class TokenBucket {
+ public:
+  TokenBucket(double rate, double burst) : rate_(rate), burst_(burst), tokens_(burst) {}
+  bool take(double now) {
+    tokens_ = std::min(burst_, tokens_ + (now - at_) * rate_);
+    at_ = now;
+    if (tokens_ < 1) return false;
+    tokens_ -= 1;
+    return true;
+  }
+
+ private:
+  double rate_, burst_, tokens_, at_ = 0;
+};
 // The farm changes slowly; compare it a few times a second, not every tick.
 constexpr uint32_t kFarmEveryTicks = 5;
 // How often the host sends a WorldCheck, and how many disagreements in a row
@@ -226,7 +244,8 @@ class HostSession final : public Session, Peer {
       farmKnown_.clear();
     } else if (auto* farm = std::get_if<FarmRequest>(&msg)) {
       auto guest = remote_.latest();
-      FarmOutcome outcome = guest ? game_.applyGuestFarmAction(farm->intent, *guest) : FarmOutcome{};
+      bool allowed = guest && farmBudget_.take(now);
+      FarmOutcome outcome = allowed ? game_.applyGuestFarmAction(farm->intent, *guest) : FarmOutcome{};
       conn_->sendReliable(FarmResult{farm->requestId, outcome});
     } else if (auto* chat = std::get_if<Chat>(&msg)) {
       log(guestName_ + ": " + chat->text);
@@ -340,13 +359,10 @@ class HostSession final : public Session, Peer {
   // where the guest actually is and isn't arriving faster than anyone can swing.
   void onAttack(const AttackRequest& request, double now) {
     auto guest = remote_.latest();
-    attackBudget_ = std::min(kAttackBurst, attackBudget_ + (now - budgetAt_) * kAttacksPerSec);
-    budgetAt_ = now;
-    if (!guest || attackBudget_ < 1) {
+    if (!guest || !attackBudget_.take(now)) {
       conn_->sendReliable(HitResult{request.requestId, {}});
       return;
     }
-    attackBudget_ -= 1;
 
     AttackIntent intent = request.intent;
     if (distance(intent.origin, guest->pos) > kMaxAttackDrift) intent.origin = guest->pos;
@@ -382,8 +398,8 @@ class HostSession final : public Session, Peer {
   std::map<uint32_t, EntityState> known_;  // what the guest has been told exists
   std::set<uint32_t> pickedUp_;
   std::map<uint32_t, FarmTile> farmKnown_;  // by FarmTile::key
-  double attackBudget_ = kAttackBurst;
-  double budgetAt_ = 0;
+  TokenBucket attackBudget_{kAttacksPerSec, kAttackBurst};
+  TokenBucket farmBudget_{kFarmActionsPerSec, kFarmBurst};
 };
 
 class GuestSessionImpl final : public GuestSession, Peer {
