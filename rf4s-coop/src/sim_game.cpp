@@ -131,6 +131,80 @@ std::optional<uint16_t> SimGame::takeDropForGuest(uint32_t entityId) {
   return item;
 }
 
+void SimGame::createFarm(uint8_t size) {
+  for (uint8_t x = 0; x < size; ++x) {
+    for (uint8_t y = 0; y < size; ++y) {
+      FarmTile t;
+      t.fieldId = kFieldId;
+      t.x = x;
+      t.y = y;
+      farm_[t.key()] = t;
+    }
+  }
+}
+
+FarmOutcome SimGame::farmAction(const FarmIntent& intent) {
+  FarmTile probe;
+  probe.fieldId = intent.fieldId;
+  probe.x = intent.x;
+  probe.y = intent.y;
+  auto it = farm_.find(probe.key());
+  if (it == farm_.end()) return {};
+  FarmTile& t = it->second;
+
+  switch (intent.action) {
+    case FarmAction::Till:
+      if (t.soil != Soil::Untilled) return {};
+      t.soil = Soil::Tilled;
+      return {true, 0};
+    case FarmAction::Water:
+      if (t.soil == Soil::Untilled) return {};
+      t.soil = Soil::Watered;
+      return {true, 0};
+    case FarmAction::Plant:
+      if (t.soil == Soil::Untilled || t.cropId != 0 || intent.itemId == 0) return {};
+      t.cropId = intent.itemId;
+      t.growth = 0;
+      return {true, 0};
+    case FarmAction::Harvest: {
+      if (t.cropId == 0 || t.growth < kRipe) return {};
+      auto item = static_cast<uint16_t>(kCropItemBase + t.cropId);
+      t.cropId = 0;
+      t.growth = 0;
+      return {true, item};
+    }
+  }
+  return {};
+}
+
+void SimGame::growCrops() {
+  for (auto& [key, t] : farm_) {
+    if (t.soil != Soil::Watered) continue;
+    if (t.cropId != 0 && t.growth < kRipe) ++t.growth;
+    t.soil = Soil::Tilled;
+  }
+}
+
+std::vector<FarmTile> SimGame::readFarmTiles() {
+  std::vector<FarmTile> out;
+  for (auto& [key, t] : farm_) out.push_back(t);
+  return out;
+}
+
+FarmOutcome SimGame::applyGuestFarmAction(const FarmIntent& intent, const PlayerSnapshot& guest) {
+  if (intent.fieldId != kFieldId || distance(tileCenter(intent.x, intent.y), guest.pos) > kFarmReach) return {};
+  return farmAction(intent);
+}
+
+void SimGame::takeItem(uint16_t itemId) {
+  auto it = std::find(inventory_.begin(), inventory_.end(), itemId);
+  if (it != inventory_.end()) inventory_.erase(it);
+}
+
+void SimGame::applyFarmTiles(const std::vector<FarmTile>& tiles) {
+  for (auto& t : tiles) farmMirror_[t.key()] = t;
+}
+
 void SimGame::removeRemoteEntity(uint32_t id, bool killed) {
   mirrored_.erase(id);
   if (killed) killedSeen_.push_back(id);

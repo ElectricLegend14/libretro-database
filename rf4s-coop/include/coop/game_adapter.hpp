@@ -46,11 +46,19 @@ class IGameAdapter {
   // or nullopt if it's already gone.
   virtual std::optional<uint16_t> takeDropForGuest(uint32_t /*entityId*/) { return std::nullopt; }
 
+  // Every tile of every farm field the host owns.
+  virtual std::vector<FarmTile> readFarmTiles() { return {}; }
+
+  // Runs the guest's tool or seed on the host's farm with the game's own
+  // rules. The host checks reach; the tile change itself is picked up by the
+  // next readFarmTiles.
+  virtual FarmOutcome applyGuestFarmAction(const FarmIntent&, const PlayerSnapshot& /*guest*/) { return {}; }
+
   // ---- Guest only ----------------------------------------------------------
 
-  // While connected, the guest's own game must not run monsters or drops;
-  // the host's copies are shown instead.
-  virtual void setLocalEntitiesSuppressed(bool /*suppressed*/) {}
+  // While connected, the guest's own game must not run its own monsters,
+  // drops or farm; the host's copies are shown instead.
+  virtual void setLocalWorldSuppressed(bool /*suppressed*/) {}
 
   // Create or move the guest's copy of a host entity. Called every frame.
   virtual void upsertRemoteEntity(const EntityState&) {}
@@ -65,6 +73,11 @@ class IGameAdapter {
 
   virtual void applyHitToLocalPlayer(const HurtEvent&) {}
   virtual void giveItem(uint16_t /*itemId*/) {}
+  virtual void takeItem(uint16_t /*itemId*/) {}
+
+  // Overwrites the guest's view of the host's farm.
+  virtual void applyFarmTiles(const std::vector<FarmTile>&) {}
+  virtual std::vector<FarmIntent> drainLocalFarmActions() { return {}; }
 
   // After fainting, the guest wakes beside the host.
   virtual void reviveLocalPlayer(uint16_t mapId, const Vec3& pos, uint32_t /*hp*/) { warpLocalPlayer(mapId, pos); }

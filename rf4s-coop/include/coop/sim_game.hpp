@@ -22,6 +22,12 @@ class SimGame : public IGameAdapter {
   static constexpr float kBiteRange = 1.5f;
   static constexpr uint32_t kBiteDamage = 8;
   static constexpr uint16_t kDropItemBase = 1000;  // a monster of kind k drops item 1000 + k
+  // The farm: one square field next to where the guest stands in tests.
+  static constexpr uint16_t kFieldId = 1;
+  static constexpr Vec3 kFieldOrigin{2, 0, -2};
+  static constexpr float kFarmReach = 2.5f;
+  static constexpr uint8_t kRipe = 3;               // days of watering before harvest
+  static constexpr uint16_t kCropItemBase = 2000;  // seed s grows into item 2000 + s
 
   SimGame(uint16_t mapId, float radius, float angularSpeed) : radius_(radius), speed_(angularSpeed) {
     player_.mapId = mapId;
@@ -46,7 +52,20 @@ class SimGame : public IGameAdapter {
   }
   const std::map<uint32_t, EntityState>& world() const { return world_; }
 
+  // ---- farm (host side)
+  void createFarm(uint8_t size);
+  // Works a tile with no reach check: what the host's own player does.
+  FarmOutcome farmAction(const FarmIntent& intent);
+  // A new day: watered crops grow one step and the soil dries out.
+  void growCrops();
+  Vec3 tileCenter(uint8_t x, uint8_t y) const {
+    return {kFieldOrigin.x + x + 0.5f, kFieldOrigin.y, kFieldOrigin.z + y + 0.5f};
+  }
+  const std::map<uint32_t, FarmTile>& farm() const { return farm_; }
+
   // ---- what the guest side was asked to show and do
+  void queueFarm(const FarmIntent& intent) { farmActions_.push_back(intent); }
+  const std::map<uint32_t, FarmTile>& farmMirror() const { return farmMirror_; }
   void queueAttack(const AttackIntent& intent) { attacks_.push_back(intent); }
   void queuePickup(uint32_t id) { pickups_.push_back(id); }
   const std::map<uint32_t, EntityState>& mirrored() const { return mirrored_; }
@@ -57,6 +76,7 @@ class SimGame : public IGameAdapter {
   const std::optional<PlayerSnapshot>& remote() const { return remote_; }
   int warps() const { return warps_; }
   void setHp(uint32_t hp) { player_.hp = hp; }
+  void addItem(uint16_t itemId) { inventory_.push_back(itemId); }
 
   // IGameAdapter
   PlayerSnapshot readLocalPlayer() override { return player_; }
@@ -70,8 +90,10 @@ class SimGame : public IGameAdapter {
   std::vector<Hit> resolveGuestAttack(const AttackIntent& intent, const PlayerSnapshot& guest) override;
   std::vector<HurtEvent> drainHitsOnRemotePlayer() override;
   std::optional<uint16_t> takeDropForGuest(uint32_t entityId) override;
+  std::vector<FarmTile> readFarmTiles() override;
+  FarmOutcome applyGuestFarmAction(const FarmIntent& intent, const PlayerSnapshot& guest) override;
 
-  void setLocalEntitiesSuppressed(bool suppressed) override { suppressed_ = suppressed; }
+  void setLocalWorldSuppressed(bool suppressed) override { suppressed_ = suppressed; }
   void upsertRemoteEntity(const EntityState& e) override { mirrored_[e.id] = e; }
   void removeRemoteEntity(uint32_t id, bool killed) override;
   std::vector<AttackIntent> drainLocalAttacks() override { return std::exchange(attacks_, {}); }
@@ -79,6 +101,9 @@ class SimGame : public IGameAdapter {
   void showHits(const std::vector<Hit>& hits) override { hitsShown_.push_back(hits); }
   void applyHitToLocalPlayer(const HurtEvent& hurt) override;
   void giveItem(uint16_t itemId) override { inventory_.push_back(itemId); }
+  void takeItem(uint16_t itemId) override;
+  void applyFarmTiles(const std::vector<FarmTile>& tiles) override;
+  std::vector<FarmIntent> drainLocalFarmActions() override { return std::exchange(farmActions_, {}); }
   void reviveLocalPlayer(uint16_t mapId, const Vec3& pos, uint32_t hp) override;
 
  private:
@@ -102,6 +127,7 @@ class SimGame : public IGameAdapter {
   std::map<uint32_t, EntityState> world_;
   std::map<uint32_t, Monster> monsters_;
   std::vector<HurtEvent> hurts_;
+  std::map<uint32_t, FarmTile> farm_;
 
   bool suppressed_ = false;
   std::map<uint32_t, EntityState> mirrored_;
@@ -110,6 +136,8 @@ class SimGame : public IGameAdapter {
   std::vector<AttackIntent> attacks_;
   std::vector<uint32_t> pickups_;
   std::vector<uint16_t> inventory_;
+  std::map<uint32_t, FarmTile> farmMirror_;
+  std::vector<FarmIntent> farmActions_;
 };
 
 }  // namespace coop

@@ -19,6 +19,8 @@ constexpr float kMaxAttackDrift = 4;  // attack origin vs. last reported positio
 constexpr float kPickupRange = 3;
 constexpr double kAttacksPerSec = 8;
 constexpr double kAttackBurst = 4;
+// The farm changes slowly; compare it a few times a second, not every tick.
+constexpr uint32_t kFarmEveryTicks = 5;
 // Guest: how long fainted before waking up beside the host.
 constexpr double kFaintSec = 3;
 // After waking, bites the host settled against the old position are ignored.
@@ -150,6 +152,7 @@ class HostSession final : public Session, Peer {
       conn_->sendUnreliable(localState());
       if (tick_ % clockEveryTicks() == 0) conn_->sendUnreliable(ClockSync{game_.readClock()});
       syncEntities();
+      if (tick_ % kFarmEveryTicks == 0) syncFarm();
     }
     for (auto& hurt : game_.drainHitsOnRemotePlayer()) conn_->sendReliable(PlayerHurt{hurt});
     drawPartner(now);
@@ -173,6 +176,10 @@ class HostSession final : public Session, Peer {
       onAttack(*attack, now);
     } else if (auto* pickup = std::get_if<PickupRequest>(&msg)) {
       onPickup(*pickup);
+    } else if (auto* farm = std::get_if<FarmRequest>(&msg)) {
+      auto guest = remote_.latest();
+      FarmOutcome outcome = guest ? game_.applyGuestFarmAction(farm->intent, *guest) : FarmOutcome{};
+      conn_->sendReliable(FarmResult{farm->requestId, outcome});
     } else if (auto* chat = std::get_if<Chat>(&msg)) {
       log(guestName_ + ": " + chat->text);
     } else if (std::holds_alternative<Goodbye>(msg)) {
@@ -244,6 +251,23 @@ class HostSession final : public Session, Peer {
     if (!batch.entities.empty()) conn_->sendUnreliable(batch);
   }
 
+  // Sends tiles that changed since the guest last heard about them. Right
+  // after joining that's every tile: the guest's first full copy of the farm.
+  void syncFarm() {
+    FarmTiles batch;
+    for (auto& tile : game_.readFarmTiles()) {
+      auto [it, isNew] = farmKnown_.try_emplace(tile.key(), tile);
+      if (!isNew && it->second == tile) continue;
+      it->second = tile;
+      batch.tiles.push_back(tile);
+      if (batch.tiles.size() == FarmTiles::kMaxPerPacket) {
+        conn_->sendReliable(batch);
+        batch.tiles.clear();
+      }
+    }
+    if (!batch.tiles.empty()) conn_->sendReliable(batch);
+  }
+
   DespawnReason despawnReason(uint32_t id, const EntityState& last) {
     if (pickedUp_.erase(id)) return DespawnReason::PickedUp;
     if (last.category == EntityCategory::Monster && last.hp == 0) return DespawnReason::Killed;
@@ -285,12 +309,14 @@ class HostSession final : public Session, Peer {
   void onDisconnected() override {
     known_.clear();
     pickedUp_.clear();
+    farmKnown_.clear();
   }
 
   uint32_t guestNonce_ = 0;
   std::string guestName_;
   std::map<uint32_t, EntityState> known_;  // what the guest has been told exists
   std::set<uint32_t> pickedUp_;
+  std::map<uint32_t, FarmTile> farmKnown_;  // by FarmTile::key
   double attackBudget_ = kAttackBurst;
   double budgetAt_ = 0;
 };
@@ -353,7 +379,7 @@ class GuestSessionImpl final : public GuestSession, Peer {
     log("Joined the host");
     conn_.emplace(*transport_, host_);
     lastHeard_ = now;
-    game_.setLocalEntitiesSuppressed(true);
+    game_.setLocalWorldSuppressed(true);
   }
 
   void onMessage(const Message& msg, double now) override {
@@ -391,6 +417,10 @@ class GuestSessionImpl final : public GuestSession, Peer {
       }
     } else if (auto* pickup = std::get_if<PickupResult>(&msg)) {
       if (pickup->granted) game_.giveItem(pickup->itemId);
+    } else if (auto* tiles = std::get_if<FarmTiles>(&msg)) {
+      game_.applyFarmTiles(tiles->tiles);
+    } else if (auto* farm = std::get_if<FarmResult>(&msg)) {
+      onFarmResult(*farm);
     } else if (auto* chat = std::get_if<Chat>(&msg)) {
       log("Host: " + chat->text);
     } else if (std::holds_alternative<Goodbye>(msg)) {
@@ -422,9 +452,29 @@ class GuestSessionImpl final : public GuestSession, Peer {
   void sendActions() {
     auto attacks = game_.drainLocalAttacks();
     auto pickups = game_.drainLocalPickups();
+    auto farming = game_.drainLocalFarmActions();
     if (faintedAt_) return;  // can't act while fainted
     for (auto& intent : attacks) conn_->sendReliable(AttackRequest{nextRequestId_++, intent});
     for (auto id : pickups) conn_->sendReliable(PickupRequest{id});
+    for (auto& intent : farming) {
+      uint32_t id = nextRequestId_++;
+      pendingFarm_[id] = intent;
+      conn_->sendReliable(FarmRequest{id, intent});
+    }
+  }
+
+  // Items change hands only once the host agrees: a seed is used up when the
+  // planting worked, a crop arrives when the harvest did.
+  void onFarmResult(const FarmResult& result) {
+    auto it = pendingFarm_.find(result.requestId);
+    if (it == pendingFarm_.end()) return;
+    FarmIntent intent = it->second;
+    pendingFarm_.erase(it);
+    if (!result.outcome.ok) return;
+    if (intent.action == FarmAction::Plant) game_.takeItem(intent.itemId);
+    if (intent.action == FarmAction::Harvest && result.outcome.harvestedItem) {
+      game_.giveItem(result.outcome.harvestedItem);
+    }
   }
 
   void wakeUp(double now) {
@@ -442,8 +492,9 @@ class GuestSessionImpl final : public GuestSession, Peer {
       if (mirror.shown) game_.removeRemoteEntity(id, false);
     }
     entities_.clear();
+    pendingFarm_.clear();
     faintedAt_.reset();
-    game_.setLocalEntitiesSuppressed(false);
+    game_.setLocalWorldSuppressed(false);
   }
 
   // Follow the host to their map if we've been apart for too long.
@@ -474,6 +525,7 @@ class GuestSessionImpl final : public GuestSession, Peer {
   double nextHello_ = 0;
   std::optional<double> apartSince_;
   std::map<uint32_t, Mirror> entities_;
+  std::map<uint32_t, FarmIntent> pendingFarm_;  // by request ID
   uint32_t nextRequestId_ = 1;
   std::optional<double> faintedAt_;
   double graceUntil_ = 0;

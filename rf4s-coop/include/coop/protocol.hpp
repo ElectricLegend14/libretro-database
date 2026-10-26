@@ -21,13 +21,16 @@ enum class MsgType : uint8_t {
   PlayerState = 0x10,
   AttackRequest = 0x11,
   PickupRequest = 0x12,
+  FarmRequest = 0x13,
   EntitySpawn = 0x20,
   EntityUpdates = 0x21,
   EntityDespawn = 0x22,
   HitResult = 0x23,
   PlayerHurt = 0x24,
   PickupResult = 0x25,
+  FarmResult = 0x26,
   ClockSync = 0x31,
+  FarmTiles = 0x32,
   Chat = 0x40,
   Goodbye = 0xFF,
 };
@@ -68,6 +71,27 @@ struct AttackRequest {
 struct PickupRequest {
   static constexpr MsgType kType = MsgType::PickupRequest;
   uint32_t entityId = 0;
+};
+
+// Guest -> host, reliable.
+struct FarmRequest {
+  static constexpr MsgType kType = MsgType::FarmRequest;
+  uint32_t requestId = 0;
+  FarmIntent intent;
+};
+
+// Host -> guest, reliable. The tile itself changes through FarmTiles.
+struct FarmResult {
+  static constexpr MsgType kType = MsgType::FarmResult;
+  uint32_t requestId = 0;
+  FarmOutcome outcome;
+};
+
+// Host -> guest, reliable: tiles that changed (all of them right after joining).
+struct FarmTiles {
+  static constexpr MsgType kType = MsgType::FarmTiles;
+  static constexpr size_t kMaxPerPacket = 120;
+  std::vector<FarmTile> tiles;
 };
 
 // Host -> guest, reliable: an entity came into range.
@@ -143,8 +167,9 @@ struct Goodbye {
   GoodbyeReason reason = GoodbyeReason::Quit;
 };
 
-using Message = std::variant<Hello, Welcome, PlayerState, AttackRequest, PickupRequest, EntitySpawn, EntityUpdates,
-                             EntityDespawn, HitResult, PlayerHurt, PickupResult, ClockSync, Chat, Goodbye>;
+using Message =
+    std::variant<Hello, Welcome, PlayerState, AttackRequest, PickupRequest, FarmRequest, EntitySpawn, EntityUpdates,
+                 EntityDespawn, HitResult, PlayerHurt, PickupResult, FarmResult, ClockSync, FarmTiles, Chat, Goodbye>;
 
 // A message on its own: type byte + payload.
 std::vector<uint8_t> encodeMessage(const Message& msg);

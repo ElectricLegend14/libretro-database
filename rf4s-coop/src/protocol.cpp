@@ -172,6 +172,35 @@ void write(Writer& w, const PickupResult& m) {
   w.u8(m.granted ? 1 : 0);
   w.u16(m.itemId);
 }
+void write(Writer& w, const FarmIntent& f) {
+  w.u8(static_cast<uint8_t>(f.action));
+  w.u16(f.fieldId);
+  w.u8(f.x);
+  w.u8(f.y);
+  w.u16(f.itemId);
+}
+void write(Writer& w, const FarmRequest& m) {
+  w.u32(m.requestId);
+  write(w, m.intent);
+}
+void write(Writer& w, const FarmResult& m) {
+  w.u32(m.requestId);
+  w.u8(m.outcome.ok ? 1 : 0);
+  w.u16(m.outcome.harvestedItem);
+}
+void write(Writer& w, const FarmTiles& m) {
+  size_t n = std::min(m.tiles.size(), FarmTiles::kMaxPerPacket);
+  w.u8(static_cast<uint8_t>(n));
+  for (size_t i = 0; i < n; ++i) {
+    const auto& t = m.tiles[i];
+    w.u16(t.fieldId);
+    w.u8(t.x);
+    w.u8(t.y);
+    w.u8(static_cast<uint8_t>(t.soil));
+    w.u16(t.cropId);
+    w.u8(t.growth);
+  }
+}
 void write(Writer& w, const ClockSync& m) {
   w.u16(m.clock.year);
   w.u8(m.clock.season);
@@ -239,6 +268,25 @@ bool read(Reader& r, PlayerHurt& m) {
   return r.u32(m.hurt.attackerId) && r.u32(m.hurt.damage) && r.vec3(m.hurt.knockback);
 }
 bool read(Reader& r, PickupResult& m) { return r.u32(m.entityId) && readBool(r, m.granted) && r.u16(m.itemId); }
+bool read(Reader& r, FarmIntent& f) {
+  return readEnum(r, f.action, FarmAction::Harvest) && r.u16(f.fieldId) && r.u8(f.x) && r.u8(f.y) && r.u16(f.itemId);
+}
+bool read(Reader& r, FarmRequest& m) { return r.u32(m.requestId) && read(r, m.intent); }
+bool read(Reader& r, FarmResult& m) {
+  return r.u32(m.requestId) && readBool(r, m.outcome.ok) && r.u16(m.outcome.harvestedItem);
+}
+bool read(Reader& r, FarmTiles& m) {
+  uint8_t n;
+  if (!r.u8(n) || n > FarmTiles::kMaxPerPacket) return false;
+  m.tiles.resize(n);
+  for (auto& t : m.tiles) {
+    if (!r.u16(t.fieldId) || !r.u8(t.x) || !r.u8(t.y) || !readEnum(r, t.soil, Soil::Watered) || !r.u16(t.cropId) ||
+        !r.u8(t.growth)) {
+      return false;
+    }
+  }
+  return true;
+}
 bool read(Reader& r, ClockSync& m) {
   return r.u16(m.clock.year) && r.u8(m.clock.season) && r.u8(m.clock.day) && r.u8(m.clock.hour) &&
          r.u8(m.clock.minute) && m.clock.season < 4 && m.clock.hour < 24 && m.clock.minute < 60;
@@ -282,6 +330,9 @@ std::optional<Message> decodeMessage(const uint8_t* data, size_t len) {
     case MsgType::HitResult: return readAs<HitResult>(r);
     case MsgType::PlayerHurt: return readAs<PlayerHurt>(r);
     case MsgType::PickupResult: return readAs<PickupResult>(r);
+    case MsgType::FarmRequest: return readAs<FarmRequest>(r);
+    case MsgType::FarmResult: return readAs<FarmResult>(r);
+    case MsgType::FarmTiles: return readAs<FarmTiles>(r);
     case MsgType::ClockSync: return readAs<ClockSync>(r);
     case MsgType::Chat: return readAs<Chat>(r);
     case MsgType::Goodbye: return readAs<Goodbye>(r);

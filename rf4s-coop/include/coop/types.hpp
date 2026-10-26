@@ -75,4 +75,33 @@ struct HurtEvent {
   Vec3 knockback;
 };
 
+enum class Soil : uint8_t { Untilled = 0, Tilled = 1, Watered = 2 };
+
+// One square of a farm field. The host owns every tile; the guest sees copies.
+struct FarmTile {
+  uint16_t fieldId = 0;
+  uint8_t x = 0, y = 0;
+  Soil soil = Soil::Untilled;
+  uint16_t cropId = 0;  // 0 = nothing planted
+  uint8_t growth = 0;
+
+  uint32_t key() const { return (static_cast<uint32_t>(fieldId) << 16) | (x << 8) | y; }
+  bool operator==(const FarmTile&) const = default;
+};
+
+enum class FarmAction : uint8_t { Till = 0, Water = 1, Plant = 2, Harvest = 3 };
+
+// The guest used a tool or seed on a tile. The host decides if it works.
+struct FarmIntent {
+  FarmAction action = FarmAction::Till;
+  uint16_t fieldId = 0;
+  uint8_t x = 0, y = 0;
+  uint16_t itemId = 0;  // seed for Plant, tool otherwise
+};
+
+struct FarmOutcome {
+  bool ok = false;
+  uint16_t harvestedItem = 0;  // set by a successful Harvest
+};
+
 }  // namespace coop

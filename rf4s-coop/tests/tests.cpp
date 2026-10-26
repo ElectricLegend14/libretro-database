@@ -710,6 +710,91 @@ TEST(combat_works_on_a_bad_network) {
   CHECK(p.guestGame.killedSeen() == std::vector<uint32_t>{monster});
 }
 
+// ------------------------------------------------------------------ phase 3
+
+TEST(protocol_round_trips_farm_messages) {
+  FarmTile tile;
+  tile.fieldId = 3;
+  tile.x = 7;
+  tile.y = 250;
+  tile.soil = Soil::Watered;
+  tile.cropId = 42;
+  tile.growth = 2;
+  auto tiles = roundTrip(FarmTiles{{tile, FarmTile{}}});
+  CHECK(tiles && tiles->tiles.size() == 2 && tiles->tiles[0] == tile);
+
+  auto request = roundTrip(FarmRequest{9, {FarmAction::Plant, 3, 7, 250, 42}});
+  CHECK(request && request->requestId == 9 && request->intent.action == FarmAction::Plant &&
+        request->intent.y == 250 && request->intent.itemId == 42);
+
+  auto result = roundTrip(FarmResult{9, {true, 2042}});
+  CHECK(result && result->outcome.ok && result->outcome.harvestedItem == 2042);
+
+  auto bytes = encodeMessage(FarmTiles{{tile}});
+  bytes[6] = 3;  // soil out of range
+  CHECK(!decodeMessage(bytes.data(), bytes.size()));
+}
+
+TEST(guest_gets_a_full_copy_of_the_farm_on_join) {
+  Arena a;
+  a.hostGame.createFarm(20);  // 400 tiles: several packets
+  a.hostGame.farmAction({FarmAction::Till, SimGame::kFieldId, 4, 4, 0});
+  a.hostGame.farmAction({FarmAction::Plant, SimGame::kFieldId, 4, 4, 9});
+  a.run(2);
+  CHECK(a.guestGame.farmMirror() == a.hostGame.farm());
+}
+
+TEST(host_farming_shows_up_on_the_guest) {
+  Arena a;
+  a.hostGame.createFarm(8);
+  a.run(1);
+  a.hostGame.farmAction({FarmAction::Till, SimGame::kFieldId, 6, 6, 0});
+  a.hostGame.farmAction({FarmAction::Water, SimGame::kFieldId, 6, 6, 0});
+  a.run(1);
+  CHECK(a.guestGame.farmMirror() == a.hostGame.farm());
+}
+
+TEST(guest_grows_a_crop_from_seed_to_harvest) {
+  Arena a;
+  a.hostGame.createFarm(8);
+  a.guestGame.addItem(5);  // a seed
+  a.run(1);
+  // The tile just beside where the guest stands.
+  FarmIntent tile{FarmAction::Till, SimGame::kFieldId, 1, 1, 0};
+  auto act = [&](FarmAction action, uint16_t item = 0) {
+    FarmIntent intent = tile;
+    intent.action = action;
+    intent.itemId = item;
+    a.guestGame.queueFarm(intent);
+    a.settle();
+  };
+  act(FarmAction::Till);
+  act(FarmAction::Plant, 5);
+  CHECK(a.guestGame.inventory().empty());  // the seed went into the ground
+
+  for (int day = 0; day < SimGame::kRipe; ++day) {
+    act(FarmAction::Harvest);  // too early: nothing happens
+    act(FarmAction::Water);
+    a.hostGame.growCrops();    // the host sleeps
+  }
+  CHECK(a.guestGame.inventory().empty());
+  act(FarmAction::Harvest);
+  CHECK(a.guestGame.inventory() == std::vector<uint16_t>{SimGame::kCropItemBase + 5});
+  CHECK(a.guestGame.farmMirror() == a.hostGame.farm());
+}
+
+TEST(guest_cannot_farm_out_of_reach_or_on_bad_soil) {
+  Arena a;
+  a.hostGame.createFarm(8);
+  a.guestGame.addItem(5);
+  a.run(1);
+  a.guestGame.queueFarm({FarmAction::Till, SimGame::kFieldId, 7, 7, 0});   // across the field
+  a.guestGame.queueFarm({FarmAction::Plant, SimGame::kFieldId, 1, 1, 5});  // not tilled yet
+  a.settle();
+  CHECK(a.guestGame.inventory() == std::vector<uint16_t>{5});  // seed kept
+  for (auto& [key, t] : a.hostGame.farm()) CHECK(t.soil == Soil::Untilled);
+}
+
 }  // namespace
 
 int main() {
