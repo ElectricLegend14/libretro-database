@@ -134,6 +134,13 @@ game's own process, so a wrong offset gives you wrong numbers in the log rather 
   mod does it too before every session.
 - The guest's character is stored in its own file, never in the game's save slots.
 - The mod refuses to start a session when the two players' game builds differ.
+- Every packet is length- and range-checked before use, and the host checks every
+  guest request against its own world. The tests fuzz the decoder with 300,000
+  random and mutated packets and flood a live host with garbage.
+- Plain UDP isn't authenticated or encrypted: someone who can forge packets from
+  your partner's exact address could disrupt a session (not crash it). Play with
+  people you trust over LAN or a VPN for now; internet play is meant to move to
+  Steam Networking Sockets, which encrypts and authenticates.
 
 ## CI
 

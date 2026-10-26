@@ -1012,6 +1012,113 @@ TEST(save_backups_copy_everything_and_keep_the_newest) {
   CHECK(!backupSaves(dir.path / "missing", dir.path / "backups", "x", 5, error));
 }
 
+// ------------------------------------------------------------------- fuzzing
+
+// Valid messages of every kind, to mutate from.
+std::vector<std::vector<uint8_t>> seedMessages() {
+  EntityState e;
+  e.id = 3;
+  e.hp = 4;
+  std::vector<Message> msgs = {
+      Hello{1, 7, 9, "x"},
+      Welcome{true, 1, 9, ""},
+      PlayerState{5, {}},
+      AttackRequest{1, {}},
+      PickupRequest{3},
+      FarmRequest{2, {}},
+      ResyncRequest{},
+      EntitySpawn{1, e},
+      EntityUpdates{1, {{3, {}, 0, 0, 1}, {4, {}, 0, 0, 2}}},
+      EntityDespawn{3, DespawnReason::Killed},
+      HitResult{1, {{3, 1, 0, true}}},
+      PlayerHurt{{3, 1, {}}},
+      PickupResult{3, true, 5},
+      FarmResult{2, {true, 7}},
+      ClockSync{{}},
+      FarmTiles{{FarmTile{}, FarmTile{}}},
+      WorldCheck{1, 2, 3, 4},
+      Chat{"hello"},
+      Goodbye{},
+  };
+  std::vector<std::vector<uint8_t>> out;
+  for (auto& m : msgs) out.push_back(encodeMessage(m));
+  return out;
+}
+
+std::vector<uint8_t> mutate(std::vector<uint8_t> bytes, std::mt19937& rng) {
+  int edits = 1 + static_cast<int>(rng() % 4);
+  for (int i = 0; i < edits; ++i) {
+    switch (rng() % 4) {
+      case 0:
+        if (!bytes.empty()) bytes[rng() % bytes.size()] = static_cast<uint8_t>(rng());
+        break;
+      case 1:
+        if (!bytes.empty()) bytes.resize(rng() % bytes.size());
+        break;
+      case 2:
+        bytes.push_back(static_cast<uint8_t>(rng()));
+        break;
+      case 3:
+        if (!bytes.empty()) bytes[rng() % bytes.size()] ^= static_cast<uint8_t>(1u << (rng() % 8));
+        break;
+    }
+  }
+  return bytes;
+}
+
+TEST(decoder_survives_random_and_mutated_input) {
+  std::mt19937 rng(2026);
+  auto seeds = seedMessages();
+  CHECK(seeds.size() == std::variant_size_v<Message>);  // every message kind is covered
+  for (auto& seed : seeds) CHECK(decodeMessage(seed.data(), seed.size()).has_value());
+
+  int decoded = 0;
+  for (int i = 0; i < 300000; ++i) {
+    std::vector<uint8_t> bytes;
+    if (i % 3 == 0) {
+      bytes.resize(rng() % 64);
+      for (auto& b : bytes) b = static_cast<uint8_t>(rng());
+    } else {
+      bytes = mutate(seeds[rng() % seeds.size()], rng);
+    }
+    if (auto msg = decodeMessage(bytes.data(), bytes.size())) {
+      ++decoded;
+      auto again = encodeMessage(*msg);  // whatever decodes must re-encode to the same bytes
+      CHECK(again == bytes);
+    }
+    parsePacket(bytes.data(), bytes.size());
+  }
+  CHECK(decoded > 0);  // some mutations are still valid messages
+}
+
+TEST(host_survives_a_flood_of_garbage_from_its_guest) {
+  Arena a;
+  a.hostGame.createFarm(4);
+  a.hostGame.spawnMonster(1, {a.guestSpot.x + 1, 0, 0}, 1000);
+  a.run(1);
+  // A second socket pretending to be the guest's address would be refused, so
+  // send from the guest's own port: these packets reach the connection.
+  auto attacker = a.net.open(Pair::kGuestPort + 1);
+  auto spoof = a.net.open(Pair::kGuestPort);  // shares the guest's inbox and address
+  std::mt19937 rng(7);
+  auto seeds = seedMessages();
+  for (int round = 0; round < 200; ++round) {
+    for (int i = 0; i < 50; ++i) {
+      auto body = mutate(seeds[rng() % seeds.size()], rng);
+      auto kind = static_cast<PacketKind>(rng() % 3);
+      auto packet = makePacket(kind, static_cast<uint16_t>(rng()), kind == PacketKind::Ack ? std::vector<uint8_t>{} : body);
+      (i % 2 ? attacker : spoof)->sendTo(MemoryNet::at(Pair::kHostPort), mutate(packet, rng));
+    }
+    a.run(1.0 / 20);
+  }
+  // Still standing, and the real guest can still play.
+  a.run(2);
+  CHECK(a.host->connected());
+  a.guestGame.queueAttack({AttackKind::Melee, 1, a.guestSpot, 0, 0});
+  a.settle();
+  CHECK(!a.guestGame.hitsShown().empty());
+}
+
 }  // namespace
 
 int main() {
