@@ -6,7 +6,6 @@
 #include <optional>
 
 #include "coop/signature.hpp"
-#include "layout.hpp"
 
 namespace coop {
 namespace {
@@ -35,13 +34,13 @@ bool safeWrite(uintptr_t address, const T& value) {
 
 template <typename T>
 void readField(uintptr_t base, ptrdiff_t offset, T& out) {
-  if (offset == rf4s::kUnknown) return;
+  if (offset == kUnknownOffset) return;
   if (auto v = safeRead<T>(base + static_cast<uintptr_t>(offset))) out = *v;
 }
 
 template <typename T>
 void writeField(uintptr_t base, ptrdiff_t offset, const T& value) {
-  if (offset != rf4s::kUnknown) safeWrite(base + static_cast<uintptr_t>(offset), value);
+  if (offset != kUnknownOffset) safeWrite(base + static_cast<uintptr_t>(offset), value);
 }
 
 struct Image {
@@ -51,9 +50,8 @@ struct Image {
   size_t codeSize;
 };
 
-uintptr_t resolveGlobal(const Image& image, const rf4s::GlobalRef& ref, const char* name,
-                        const Rf4sAdapter::Log& log) {
-  if (!ref.signature) {
+uintptr_t resolveGlobal(const Image& image, const GlobalRef& ref, const char* name, const Rf4sAdapter::Log& log) {
+  if (ref.signature.empty()) {
     log(std::string("  ") + name + ": no signature yet");
     return 0;
   }
@@ -85,17 +83,17 @@ uintptr_t resolveGlobal(const Image& image, const rf4s::GlobalRef& ref, const ch
 bool Rf4sAdapter::resolve(const uint8_t* module, size_t imageSize, size_t codeStart, size_t codeSize) {
   log_("Resolving signatures:");
   Image image{module, imageSize, codeStart, codeSize};
-  player_ = resolveGlobal(image, rf4s::kPlayerPtr, "player", log_);
-  mapId_ = resolveGlobal(image, rf4s::kMapId, "map id", log_);
-  clock_ = resolveGlobal(image, rf4s::kClockPtr, "clock", log_);
-  return player_ && mapId_ && clock_ && rf4s::kPlayer.posX != rf4s::kUnknown;
+  player_ = resolveGlobal(image, layout_.player, "player", log_);
+  mapId_ = resolveGlobal(image, layout_.mapId, "map id", log_);
+  clock_ = resolveGlobal(image, layout_.clock, "clock", log_);
+  return player_ && mapId_ && clock_ && layout_.playerFields.pos != kUnknownOffset;
 }
 
 PlayerSnapshot Rf4sAdapter::readLocalPlayer() {
   auto object = safeRead<uintptr_t>(player_);
   if (object && *object) {
-    const auto& o = rf4s::kPlayer;
-    readField(*object, o.posX, last_.pos);
+    const auto& o = layout_.playerFields;
+    readField(*object, o.pos, last_.pos);
     readField(*object, o.facing, last_.facing);
     readField(*object, o.anim, last_.anim);
     readField(*object, o.hp, last_.hp);
@@ -109,7 +107,7 @@ PlayerSnapshot Rf4sAdapter::readLocalPlayer() {
 
 GameClock Rf4sAdapter::readClock() {
   if (auto object = safeRead<uintptr_t>(clock_); object && *object) {
-    const auto& o = rf4s::kClock;
+    const auto& o = layout_.clockFields;
     readField(*object, o.year, lastClock_.year);
     readField(*object, o.season, lastClock_.season);
     readField(*object, o.day, lastClock_.day);
@@ -122,12 +120,28 @@ GameClock Rf4sAdapter::readClock() {
 void Rf4sAdapter::writeClock(const GameClock& clock) {
   auto object = safeRead<uintptr_t>(clock_);
   if (!object || !*object) return;
-  const auto& o = rf4s::kClock;
+  const auto& o = layout_.clockFields;
   writeField(*object, o.year, clock.year);
   writeField(*object, o.season, clock.season);
   writeField(*object, o.day, clock.day);
   writeField(*object, o.hour, clock.hour);
   writeField(*object, o.minute, clock.minute);
+}
+
+std::vector<std::string> Rf4sAdapter::dumpPlayer(size_t bytes) {
+  std::vector<std::string> lines;
+  auto object = safeRead<uintptr_t>(player_);
+  if (!object || !*object) return lines;
+  for (size_t row = 0; row < bytes; row += 16) {
+    char line[96];
+    int n = std::snprintf(line, sizeof line, "  +%04zx:", row);
+    for (size_t i = row; i < row + 16 && i < bytes; ++i) {
+      auto b = safeRead<uint8_t>(*object + i);
+      n += std::snprintf(line + n, sizeof line - static_cast<size_t>(n), b ? " %02x" : " ??", b ? *b : 0);
+    }
+    lines.push_back(line);
+  }
+  return lines;
 }
 
 // Phase 1 draws the partner as a model in the world. Until the spawning code

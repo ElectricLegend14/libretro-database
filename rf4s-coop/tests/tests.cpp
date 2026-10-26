@@ -13,6 +13,7 @@
 
 #include "coop/config.hpp"
 #include "coop/connection.hpp"
+#include "coop/layout.hpp"
 #include "coop/protocol.hpp"
 #include "coop/session.hpp"
 #include "coop/signature.hpp"
@@ -1117,6 +1118,35 @@ TEST(host_survives_a_flood_of_garbage_from_its_guest) {
   a.guestGame.queueAttack({AttackKind::Melee, 1, a.guestSpot, 0, 0});
   a.settle();
   CHECK(!a.guestGame.hitsShown().empty());
+}
+
+// -------------------------------------------------------------------- layout
+
+TEST(layout_overrides_apply_on_top_of_defaults) {
+  GameLayout layout;
+  std::string error;
+  bool ok = applyLayoutOverrides(
+      "# found in Cheat Engine\n"
+      "player.signature = 48 8B 05 ?? ?? ?? ?? 48 85 C0\n"
+      "player.pos = 0x10\n"
+      "player.hp = 36\n"
+      "map.instr_length = 8\n"
+      "clock.minute = 0x5\n"
+      "dump_player_bytes = 128\n",
+      layout, error);
+  CHECK(ok);
+  CHECK(layout.player.signature == "48 8B 05 ?? ?? ?? ?? 48 85 C0" && layout.player.dispOffset == 3);
+  CHECK(layout.playerFields.pos == 0x10 && layout.playerFields.hp == 36 && layout.playerFields.rp == kUnknownOffset);
+  CHECK(layout.mapId.instrLength == 8 && layout.mapId.dispOffset == 2);
+  CHECK(layout.clockFields.minute == 5 && layout.dumpPlayerBytes == 128);
+
+  GameLayout untouched;
+  CHECK(!applyLayoutOverrides("player.signature = 48 8B 0G\n", untouched, error));
+  CHECK(!applyLayoutOverrides("player.speed = 4\n", untouched, error));
+  CHECK(!applyLayoutOverrides("monster.signature = 48\n", untouched, error));
+  CHECK(!applyLayoutOverrides("player.pos = -4\n", untouched, error));
+  CHECK(!applyLayoutOverrides("player.pos = 0x\n", untouched, error));
+  CHECK(!applyLayoutOverrides("dump_player_bytes = 99999\n", untouched, error));
 }
 
 }  // namespace

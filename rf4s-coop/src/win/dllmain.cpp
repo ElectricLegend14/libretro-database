@@ -20,6 +20,7 @@
 #include "coop/config.hpp"
 #include "coop/session.hpp"
 #include "coop/storage.hpp"
+#include "layout.hpp"
 #include "rf4s_adapter.hpp"
 
 namespace {
@@ -141,6 +142,23 @@ class CharacterFile {
   FileLog& log_;
 };
 
+// Compiled-in signatures and offsets, with rf4s-layout.ini on top if present.
+coop::GameLayout loadLayout(const std::filesystem::path& path, FileLog& log) {
+  auto layout = coop::rf4s::defaultLayout();
+  std::ifstream in(path);
+  if (!in) return layout;
+  std::stringstream text;
+  text << in.rdbuf();
+  std::string error;
+  auto trial = layout;
+  if (coop::applyLayoutOverrides(text.str(), trial, error)) {
+    log("Using signatures and offsets from rf4s-layout.ini");
+    return trial;
+  }
+  log("rf4s-layout.ini ignored: " + error);
+  return layout;
+}
+
 DWORD WINAPI run(LPVOID) {
   auto dir = modDirectory();
   FileLog log(dir / "rf4s-coop.log");
@@ -156,7 +174,8 @@ DWORD WINAPI run(LPVOID) {
   std::snprintf(build, sizeof build, "Game build %08x, code section %zu KB", image->build, image->codeSize / 1024);
   log(build);
 
-  coop::Rf4sAdapter game(logFn);
+  auto layout = loadLayout(dir / "rf4s-layout.ini", log);
+  coop::Rf4sAdapter game(layout, logFn);
   bool ready = game.resolve(image->base, image->size, image->codeStart, image->codeSize);
   auto config = loadConfig(dir / "rf4s-coop.ini", log);
 
@@ -197,6 +216,9 @@ DWORD WINAPI run(LPVOID) {
       std::snprintf(line, sizeof line, "Player on map %u at (%.1f, %.1f, %.1f), HP %u/%u", p.mapId, p.pos.x, p.pos.y,
                     p.pos.z, p.hp, p.maxHp);
       log(line);
+      if (layout.dumpPlayerBytes > 0 && frame % 120 == 0) {
+        for (auto& row : game.dumpPlayer(layout.dumpPlayerBytes)) log(row);
+      }
     }
     Sleep(16);
   }

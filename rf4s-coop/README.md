@@ -93,6 +93,8 @@ and duplicates (`ConditionedTransport`).
 ## Use it with the game (Windows)
 
 1. Put `rf4s-coop.dll`, `rf4s-coop-inject.exe` and an `rf4s-coop.ini` in one folder.
+   (The Windows CI job uploads a ready-built DLL and tools as the `rf4s-coop-windows`
+   artifact.)
 2. Start the game.
 3. Run `rf4s-coop-inject.exe "<game exe name>"` (the name shown in Task Manager's Details tab).
 4. Read `rf4s-coop.log` in the same folder.
@@ -113,17 +115,22 @@ checks when the guest joins. `coop_sim --build <id>` can join a real host for te
 
 ## Helping with reverse engineering
 
-Every unknown lives in `src/win/layout.hpp`. For each target in the design doc's
-reverse-engineering plan:
+Every unknown is a signature or an offset. While hunting, put guesses in
+`rf4s-layout.ini` next to the DLL (start from `rf4s-layout.example.ini`): it overrides
+the compiled-in values at startup, so trying a guess needs no rebuild. For each target
+in the design doc's reverse-engineering plan:
 
 1. Find it with Cheat Engine / x64dbg, then find an instruction in the game's code that
    loads it through a RIP-relative address (`mov rax, [rip+...]`).
 2. Copy enough bytes around that instruction to make a pattern, with `??` over the
    displacement.
 3. Check it: `sigscan "<game>.exe" "48 8B 05 ?? ?? ?? ?? ..."` must say *Unique match*.
-4. Add it and any structure offsets to `layout.hpp`, rebuild and inject. The log shows
-   whether it resolved, and once the player is found it logs the live position every
-   second (phase 0's gate).
+4. Add it to `rf4s-layout.ini` and inject. The log shows whether it resolved, and once
+   the player is found it logs the live position every second (phase 0's gate).
+5. To find offsets inside the player object, set `dump_player_bytes = 256`: the log
+   gets a hex dump every 2 s. Walk, take damage or spend RP between dumps and look
+   for the bytes that change.
+6. Once a value is confirmed, copy it into `src/win/layout.hpp` so it ships in the DLL.
 
 All reads and writes go through `ReadProcessMemory` / `WriteProcessMemory` on the
 game's own process, so a wrong offset gives you wrong numbers in the log rather than a crash.
