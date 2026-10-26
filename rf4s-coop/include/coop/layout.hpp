@@ -20,6 +20,12 @@ struct GlobalRef {
   size_t instrLength = 7; // from the start of the match to the end of the instruction
 };
 
+// A function found by a signature: its start is the match plus `offset`.
+struct FunctionRef {
+  std::string signature;  // empty = not found yet
+  ptrdiff_t offset = 0;   // may be negative when the pattern starts inside the function
+};
+
 struct PlayerOffsets {
   ptrdiff_t pos = kUnknownOffset;  // three consecutive floats: x, y, z
   ptrdiff_t facing = kUnknownOffset;
@@ -42,6 +48,7 @@ struct GameLayout {
   GlobalRef player;              // RE targets 1-2: points at the player object
   GlobalRef mapId{"", 2, 6};     // RE target 6: points straight at a uint16 map ID
   GlobalRef clock;               // RE target 7: points at the calendar structure
+  FunctionRef frame;             // the game's per-frame update: co-op runs inside it
   PlayerOffsets playerFields;
   ClockOffsets clockFields;
   size_t dumpPlayerBytes = 0;    // > 0: log a hex dump of the player object every 2 s
@@ -50,6 +57,7 @@ struct GameLayout {
 // Applies `key = value` lines from rf4s-layout.ini on top of `layout`.
 // Numbers may be decimal or 0x-hex. Keys:
 //   player.signature, player.disp_offset, player.instr_length (and map.*, clock.*)
+//   frame.signature, frame.offset
 //   player.pos, player.facing, player.anim, player.hp, player.max_hp, player.rp, player.max_rp
 //   clock.year, clock.season, clock.day, clock.hour, clock.minute
 //   dump_player_bytes

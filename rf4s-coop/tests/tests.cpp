@@ -1132,9 +1132,12 @@ TEST(layout_overrides_apply_on_top_of_defaults) {
       "player.hp = 36\n"
       "map.instr_length = 8\n"
       "clock.minute = 0x5\n"
-      "dump_player_bytes = 128\n",
+      "dump_player_bytes = 128\n"
+      "frame.signature = 40 53 48 83 EC 20\n"
+      "frame.offset = -0x10\n",
       layout, error);
   CHECK(ok);
+  CHECK(layout.frame.signature == "40 53 48 83 EC 20" && layout.frame.offset == -16);
   CHECK(layout.player.signature == "48 8B 05 ?? ?? ?? ?? 48 85 C0" && layout.player.dispOffset == 3);
   CHECK(layout.playerFields.pos == 0x10 && layout.playerFields.hp == 36 && layout.playerFields.rp == kUnknownOffset);
   CHECK(layout.mapId.instrLength == 8 && layout.mapId.dispOffset == 2);
@@ -1147,6 +1150,8 @@ TEST(layout_overrides_apply_on_top_of_defaults) {
   CHECK(!applyLayoutOverrides("player.pos = -4\n", untouched, error));
   CHECK(!applyLayoutOverrides("player.pos = 0x\n", untouched, error));
   CHECK(!applyLayoutOverrides("dump_player_bytes = 99999\n", untouched, error));
+  CHECK(!applyLayoutOverrides("frame.offset = -\n", untouched, error));
+  CHECK(!applyLayoutOverrides("frame.signature = zz\n", untouched, error));
 }
 
 }  // namespace

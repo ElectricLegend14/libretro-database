@@ -23,6 +23,8 @@ class Rf4sAdapter : public IGameAdapter {
   // session needs was found.
   bool resolve(const uint8_t* module, size_t imageSize, size_t codeStart, size_t codeSize);
   bool hasPlayer() const { return player_ != 0; }
+  // The game's per-frame update, if its signature was found.
+  void* frameFunction() const { return frame_; }
 
   // Hex lines of the player object's first `bytes` bytes, for finding offsets.
   std::vector<std::string> dumpPlayer(size_t bytes);
@@ -40,6 +42,7 @@ class Rf4sAdapter : public IGameAdapter {
   uintptr_t player_ = 0;  // address of the global that holds the player pointer
   uintptr_t mapId_ = 0;
   uintptr_t clock_ = 0;
+  void* frame_ = nullptr;
   PlayerSnapshot last_;
   GameClock lastClock_;
   int framesSinceLog_ = 0;

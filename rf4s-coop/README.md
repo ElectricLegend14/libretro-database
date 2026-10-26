@@ -48,7 +48,7 @@ and stays switched off. Nothing is written to game memory until then.
 include/coop/   portable core: protocol, connection, sessions, interpolation,
                 checksums, storage, signatures, config, IGameAdapter
 src/            core implementation + SimGame (a fake game for tests and coop_sim)
-src/win/        the mod DLL: RF4S adapter, layout.hpp (signatures/offsets), DllMain
+src/win/        the mod DLL: RF4S adapter, frame hook (MinHook + thunk), default layout, DllMain
 tools/          coop_sim (host/guest without the game), sigscan, injector
 tests/          unit tests and full host/guest sessions over a simulated network
 ```
@@ -130,7 +130,12 @@ in the design doc's reverse-engineering plan:
 5. To find offsets inside the player object, set `dump_player_bytes = 256`: the log
    gets a hex dump every 2 s. Walk, take damage or spend RP between dumps and look
    for the bytes that change.
-6. Once a value is confirmed, copy it into `src/win/layout.hpp` so it ships in the DLL.
+6. Find the game's per-frame update function and give it a `frame.signature`. With it,
+   co-op runs inside that function on the game's own thread (the log says so). That's
+   required before the mod writes to game memory. The hook is a small assembly thunk
+   that forwards any signature untouched; it was tested with float arguments, a float
+   return value and stack arguments.
+7. Once a value is confirmed, copy it into `src/win/layout.hpp` so it ships in the DLL.
 
 All reads and writes go through `ReadProcessMemory` / `WriteProcessMemory` on the
 game's own process, so a wrong offset gives you wrong numbers in the log rather than a crash.

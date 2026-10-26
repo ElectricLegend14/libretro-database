@@ -20,6 +20,7 @@
 #include "coop/config.hpp"
 #include "coop/session.hpp"
 #include "coop/storage.hpp"
+#include "frame_hook.hpp"
 #include "layout.hpp"
 #include "rf4s_adapter.hpp"
 
@@ -196,20 +197,41 @@ DWORD WINAPI run(LPVOID) {
     }
   }
 
-  // Runs beside the game's own loop rather than inside it. Good enough for
-  // reading state; phase 2 moves this into a hook on the game's frame update.
   auto start = std::chrono::steady_clock::now();
-  int frame = 0;
+  auto clock = [start] { return std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count(); };
   double nextCharacterSave = 60;
-  while (!g_stop) {
-    double now = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
-    if (session) {
-      session->update(now);
-      if (character && now >= nextCharacterSave) {
-        character->save();
-        nextCharacterSave = now + 60;
+  auto tick = [&] {
+    double now = clock();
+    session->update(now);
+    if (character && now >= nextCharacterSave) {
+      character->save();
+      nextCharacterSave = now + 60;
+    }
+  };
+
+  // Best: run inside the game's own frame update, on its thread, so reads and
+  // writes never race the game. Otherwise fall back to a thread beside it,
+  // which is fine for reading but not for writing.
+  bool hooked = false;
+  if (session && game.frameFunction()) {
+    std::string error;
+    hooked = coop::FrameHook::install(game.frameFunction(), [&, logged = false]() mutable {
+      if (!logged) {
+        log("Co-op is running inside the game's frame update (thread " + std::to_string(GetCurrentThreadId()) + ")");
+        logged = true;
       }
-    } else if (game.hasPlayer() && ++frame % 60 == 0) {
+      tick();
+    }, error);
+    if (!hooked) log("Frame hook failed (" + error + "); running beside the game instead");
+  } else if (session) {
+    log("No frame.signature yet; running beside the game. Fine for reading, not for writing.");
+  }
+
+  int frame = 0;
+  while (!g_stop) {
+    if (session && !hooked) {
+      tick();
+    } else if (!session && game.hasPlayer() && ++frame % 60 == 0) {
       // Phase 0 gate: the live player position shows up in the log.
       auto p = game.readLocalPlayer();
       char line[128];
@@ -222,6 +244,7 @@ DWORD WINAPI run(LPVOID) {
     }
     Sleep(16);
   }
+  if (hooked) coop::FrameHook::uninstall();  // before the locals the hook uses go away
   if (session) session->leave();
   if (character) character->save();
   return 0;

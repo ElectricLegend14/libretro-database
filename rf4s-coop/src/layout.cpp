@@ -17,6 +17,17 @@ std::string trim(const std::string& s) {
 }
 
 template <typename T>
+bool parseNumber(const std::string& s, T& out);
+
+// Like parseNumber, but also takes a leading minus: "-0x20".
+bool parseSigned(const std::string& s, ptrdiff_t& out) {
+  if (s.empty() || s[0] != '-') return parseNumber(s, out);
+  if (!parseNumber(s.substr(1), out)) return false;
+  out = -out;
+  return true;
+}
+
+template <typename T>
 bool parseNumber(const std::string& s, T& out) {
   bool hex = s.size() > 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X');
   const char* begin = s.data() + (hex ? 2 : 0);
@@ -57,6 +68,15 @@ bool applyLayoutOverrides(const std::string& text, GameLayout& layout, std::stri
 
     if (auto it = offsets.find(key); it != offsets.end()) {
       if (!parseNumber(value, *it->second) || *it->second < 0) return fail("bad offset for " + key);
+      continue;
+    }
+    if (key == "frame.signature") {
+      if (!value.empty() && !parsePattern(value)) return fail("bad signature for " + key);
+      layout.frame.signature = value;
+      continue;
+    }
+    if (key == "frame.offset") {
+      if (!parseSigned(value, layout.frame.offset)) return fail("bad number for " + key);
       continue;
     }
     if (key == "dump_player_bytes") {

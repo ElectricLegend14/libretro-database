@@ -78,6 +78,28 @@ uintptr_t resolveGlobal(const Image& image, const GlobalRef& ref, const char* na
   return reinterpret_cast<uintptr_t>(image.module) + *target;
 }
 
+void* resolveFunction(const Image& image, const FunctionRef& ref, const char* name, const Rf4sAdapter::Log& log) {
+  if (ref.signature.empty()) {
+    log(std::string("  ") + name + ": no signature yet");
+    return nullptr;
+  }
+  auto pattern = parsePattern(ref.signature);
+  auto hits = pattern ? findAll(image.module + image.codeStart, image.codeSize, *pattern) : std::vector<size_t>{};
+  if (hits.size() != 1) {
+    log(std::string("  ") + name + ": signature matched " + std::to_string(hits.size()) + " times, need exactly 1");
+    return nullptr;
+  }
+  auto start = static_cast<ptrdiff_t>(hits.front()) + ref.offset;
+  if (start < 0 || static_cast<size_t>(start) >= image.codeSize) {
+    log(std::string("  ") + name + ": offset points outside the code section");
+    return nullptr;
+  }
+  char line[96];
+  std::snprintf(line, sizeof line, "  %s: found at +0x%zx", name, image.codeStart + static_cast<size_t>(start));
+  log(line);
+  return const_cast<uint8_t*>(image.module + image.codeStart + start);
+}
+
 }  // namespace
 
 bool Rf4sAdapter::resolve(const uint8_t* module, size_t imageSize, size_t codeStart, size_t codeSize) {
@@ -86,6 +108,7 @@ bool Rf4sAdapter::resolve(const uint8_t* module, size_t imageSize, size_t codeSt
   player_ = resolveGlobal(image, layout_.player, "player", log_);
   mapId_ = resolveGlobal(image, layout_.mapId, "map id", log_);
   clock_ = resolveGlobal(image, layout_.clock, "clock", log_);
+  frame_ = resolveFunction(image, layout_.frame, "frame update", log_);
   return player_ && mapId_ && clock_ && layout_.playerFields.pos != kUnknownOffset;
 }
 
