@@ -1,6 +1,7 @@
 #pragma once
 
 #include <optional>
+#include <string>
 #include <vector>
 
 #include "coop/types.hpp"
@@ -54,6 +55,15 @@ class IGameAdapter {
   // next readFarmTiles.
   virtual FarmOutcome applyGuestFarmAction(const FarmIntent&, const PlayerSnapshot& /*guest*/) { return {}; }
 
+  // ---- Both sides: items --------------------------------------------------
+
+  // Removes `count` of an item to hand to the partner. False (and nothing
+  // removed) if there aren't enough.
+  virtual bool takeItems(uint16_t /*itemId*/, uint16_t /*count*/) { return false; }
+  virtual void giveItems(uint16_t itemId, uint16_t count) {
+    for (uint16_t i = 0; i < count; ++i) giveItem(itemId);
+  }
+
   // ---- Guest only ----------------------------------------------------------
 
   // While connected, the guest's own game must not run its own monsters,
@@ -83,6 +93,10 @@ class IGameAdapter {
   // it back into the game after loading. nullopt = not supported yet.
   virtual std::optional<GuestCharacter> readGuestCharacter() { return std::nullopt; }
   virtual void applyGuestCharacter(const GuestCharacter&) {}
+
+  // While the host is in a cutscene the guest is frozen and told why.
+  virtual void freezeLocalPlayer(bool /*frozen*/) {}
+  virtual void showBanner(const std::string& /*text*/) {}  // empty hides it
 
   // After fainting, the guest wakes beside the host.
   virtual void reviveLocalPlayer(uint16_t mapId, const Vec3& pos, uint32_t /*hp*/) { warpLocalPlayer(mapId, pos); }

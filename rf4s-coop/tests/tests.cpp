@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -128,13 +129,13 @@ struct Pair {
     return c;
   }
 
-  void run(double seconds, bool hostRuns = true) {
+  void run(double seconds, bool hostRuns = true, bool guestRuns = true) {
     const double dt = 1.0 / 60;
     for (double end = t + seconds; t < end; t += dt) {
       hostGame.advance(dt);
       guestGame.advance(dt);
       if (hostRuns) host->update(t);
-      guest->update(t);
+      if (guestRuns) guest->update(t);
     }
   }
 };
@@ -1034,6 +1035,7 @@ std::vector<std::vector<uint8_t>> seedMessages() {
       HitResult{1, {{3, 1, 0, true}}},
       PlayerHurt{{3, 1, {}}},
       PickupResult{3, true, 5},
+      ItemGift{9, 2},
       FarmResult{2, {true, 7}},
       ClockSync{{}},
       FarmTiles{{FarmTile{}, FarmTile{}}},
@@ -1152,6 +1154,87 @@ TEST(layout_overrides_apply_on_top_of_defaults) {
   CHECK(!applyLayoutOverrides("dump_player_bytes = 99999\n", untouched, error));
   CHECK(!applyLayoutOverrides("frame.offset = -\n", untouched, error));
   CHECK(!applyLayoutOverrides("frame.signature = zz\n", untouched, error));
+}
+
+// ------------------------------------------------------- host status, gifts
+
+TEST(guest_freezes_through_the_hosts_cutscene) {
+  Pair p;
+  p.run(1);
+  p.hostGame.setStatus(PlayerStatus::kInCutscene);
+  p.run(0.5);
+  CHECK(p.guestGame.frozen() && p.guestGame.banner() == "The host is in a cutscene");
+  p.guestGame.queueAttack({AttackKind::Melee, 1, {}, 0, 0});  // can't swing while frozen
+  p.run(0.5);
+  CHECK(p.guestGame.hitsShown().empty());
+
+  p.hostGame.setStatus(0);
+  p.run(0.5);
+  CHECK(!p.guestGame.frozen() && p.guestGame.banner().empty());
+
+  // A disconnect mid-cutscene doesn't leave the guest stuck.
+  p.hostGame.setStatus(PlayerStatus::kInCutscene);
+  p.run(0.5);
+  p.host->leave();
+  p.run(0.5);
+  CHECK(!p.guestGame.frozen() && p.guestGame.banner().empty());
+}
+
+TEST(guest_saves_once_each_time_the_host_sleeps) {
+  Pair p;
+  int saves = 0;
+  p.guest.reset();
+  SessionConfig c = p.config(7, p.guestLog, "Guest");
+  c.onHostSleep = [&] { ++saves; };
+  p.guest = createGuest(p.guestGame, c, p.net.open(Pair::kGuestPort), MemoryNet::at(Pair::kHostPort));
+  p.run(1);
+  p.hostGame.setStatus(PlayerStatus::kSleeping);
+  p.run(2);  // still asleep: one save, not one per packet
+  CHECK(saves == 1);
+  p.hostGame.setStatus(0);
+  p.run(1);
+  p.hostGame.setStatus(PlayerStatus::kSleeping);
+  p.run(1);
+  CHECK(saves == 2);
+}
+
+TEST(players_hand_each_other_items) {
+  Pair p;
+  for (int i = 0; i < 3; ++i) p.hostGame.addItem(50);
+  p.guestGame.addItem(60);
+  p.run(1);
+  CHECK(p.host->giveToPartner(50, 2));
+  CHECK(p.guest->giveToPartner(60, 1));
+  CHECK(!p.guest->giveToPartner(60, 1));  // none left
+  CHECK(!p.host->giveToPartner(77, 1));   // never had it
+  p.run(1);
+  CHECK(p.hostGame.inventory() == (std::vector<uint16_t>{50, 60}));
+  CHECK(p.guestGame.inventory() == (std::vector<uint16_t>{50, 50}));
+}
+
+TEST(a_gift_that_never_arrives_comes_back) {
+  Pair p;
+  p.hostGame.addItem(50);
+  p.run(1);
+  CHECK(p.host->giveToPartner(50, 1));
+  CHECK(p.hostGame.inventory().empty());
+  p.run(6, /*hostRuns=*/true, /*guestRuns=*/false);  // the guest's game hangs; the host gives up on it
+  CHECK(!p.host->connected());
+  CHECK(p.hostGame.inventory() == std::vector<uint16_t>{50});
+  CHECK(p.guestGame.inventory().empty());
+}
+
+TEST(gifts_arrive_exactly_once_on_a_bad_network) {
+  Pair p({0.06, 0.04, 0.3, 0.2, 31});
+  for (int i = 0; i < 40; ++i) p.hostGame.addItem(static_cast<uint16_t>(i));
+  p.run(2);
+  for (int i = 0; i < 40; ++i) CHECK(p.host->giveToPartner(static_cast<uint16_t>(i), 1));
+  p.run(4);
+  auto got = p.guestGame.inventory();
+  std::sort(got.begin(), got.end());
+  std::vector<uint16_t> want(40);
+  for (int i = 0; i < 40; ++i) want[i] = static_cast<uint16_t>(i);
+  CHECK(got == want && p.hostGame.inventory().empty());
 }
 
 }  // namespace

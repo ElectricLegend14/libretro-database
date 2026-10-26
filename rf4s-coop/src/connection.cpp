@@ -12,11 +12,16 @@ int seqDelta(uint16_t seq, uint16_t from) { return static_cast<int16_t>(static_c
 
 void Connection::sendUnreliable(const Message& msg) { send(makePacket(PacketKind::Unreliable, 0, encodeMessage(msg))); }
 
-void Connection::sendReliable(const Message& msg) {
+uint16_t Connection::sendReliable(const Message& msg) {
   uint16_t seq = nextSendSeq_++;
   Pending pending{seq, makePacket(PacketKind::Reliable, seq, encodeMessage(msg)), now_, now_};
   send(pending.packet);
   unacked_.push_back(std::move(pending));
+  return seq;
+}
+
+bool Connection::acked(uint16_t seq) const {
+  return std::none_of(unacked_.begin(), unacked_.end(), [seq](const Pending& p) { return p.seq == seq; });
 }
 
 std::vector<Message> Connection::onPacket(const PacketView& packet) {

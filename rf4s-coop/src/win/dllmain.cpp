@@ -193,6 +193,7 @@ DWORD WINAPI run(LPVOID) {
     } else {
       character.emplace(dir / "guest-character.bin", game, log);
       character->load();
+      config->session.onHostSleep = [&character] { character->save(); };  // the day ends for both
       session = coop::createGuest(game, config->session);
     }
   }

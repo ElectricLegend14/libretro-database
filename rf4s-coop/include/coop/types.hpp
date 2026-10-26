@@ -24,7 +24,14 @@ struct PlayerSnapshot {
   uint16_t anim = 0;
   uint32_t hp = 0, maxHp = 0;
   uint32_t rp = 0, maxRp = 0;
+  uint8_t status = 0;  // PlayerStatus bits
 };
+
+// What a player is busy with, as bits in PlayerSnapshot::status.
+namespace PlayerStatus {
+constexpr uint8_t kInCutscene = 1;  // the guest waits, frozen, until it ends
+constexpr uint8_t kSleeping = 2;    // the day ends; the guest's character saves
+}  // namespace PlayerStatus
 
 struct GameClock {
   uint16_t year = 1;

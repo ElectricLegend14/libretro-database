@@ -12,7 +12,7 @@
 namespace coop {
 
 // First byte of every packet. Bump on any change to the wire format.
-constexpr uint8_t kProtocolVersion = 2;
+constexpr uint8_t kProtocolVersion = 3;
 constexpr size_t kMaxString = 256;
 
 enum class MsgType : uint8_t {
@@ -29,6 +29,7 @@ enum class MsgType : uint8_t {
   HitResult = 0x23,
   PlayerHurt = 0x24,
   PickupResult = 0x25,
+  ItemGift = 0x27,
   FarmResult = 0x26,
   ClockSync = 0x31,
   FarmTiles = 0x32,
@@ -94,6 +95,14 @@ struct FarmTiles {
   static constexpr MsgType kType = MsgType::FarmTiles;
   static constexpr size_t kMaxPerPacket = 120;
   std::vector<FarmTile> tiles;
+};
+
+// Either way, reliable: items handed to the partner. The sender has already
+// taken them out of its own inventory.
+struct ItemGift {
+  static constexpr MsgType kType = MsgType::ItemGift;
+  uint16_t itemId = 0;
+  uint16_t count = 0;
 };
 
 // Host -> guest, unreliable, every 2 s: a fingerprint of everything the host
@@ -187,7 +196,7 @@ struct Goodbye {
 
 using Message =
     std::variant<Hello, Welcome, PlayerState, AttackRequest, PickupRequest, FarmRequest, ResyncRequest, EntitySpawn,
-                 EntityUpdates, EntityDespawn, HitResult, PlayerHurt, PickupResult, FarmResult, ClockSync, FarmTiles,
+                 EntityUpdates, EntityDespawn, HitResult, PlayerHurt, PickupResult, ItemGift, FarmResult, ClockSync, FarmTiles,
                  WorldCheck, Chat, Goodbye>;
 
 // A message on its own: type byte + payload.

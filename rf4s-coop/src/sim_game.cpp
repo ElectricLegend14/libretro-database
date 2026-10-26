@@ -201,6 +201,12 @@ void SimGame::takeItem(uint16_t itemId) {
   if (it != inventory_.end()) inventory_.erase(it);
 }
 
+bool SimGame::takeItems(uint16_t itemId, uint16_t count) {
+  if (std::count(inventory_.begin(), inventory_.end(), itemId) < count) return false;
+  for (uint16_t i = 0; i < count; ++i) takeItem(itemId);
+  return true;
+}
+
 void SimGame::applyFarmTiles(const std::vector<FarmTile>& tiles) {
   for (auto& t : tiles) farmMirror_[t.key()] = t;
 }

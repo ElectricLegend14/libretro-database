@@ -29,7 +29,10 @@ class Connection {
   const Endpoint& peer() const { return peer_; }
 
   void sendUnreliable(const Message& msg);
-  void sendReliable(const Message& msg);
+  // Returns the message's sequence number, for acked().
+  uint16_t sendReliable(const Message& msg);
+  // True once the peer has confirmed it received that message.
+  bool acked(uint16_t seq) const;
 
   // Feeds one packet from the peer. Returns the messages it releases, in
   // order: an unreliable message, or any reliable ones now in sequence.

@@ -2,6 +2,7 @@
 
 #include <map>
 #include <optional>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -77,6 +78,9 @@ class SimGame : public IGameAdapter {
   int warps() const { return warps_; }
   void setHp(uint32_t hp) { player_.hp = hp; }
   void addItem(uint16_t itemId) { inventory_.push_back(itemId); }
+  void setStatus(uint8_t status) { player_.status = status; }
+  bool frozen() const { return frozen_; }
+  const std::string& banner() const { return banner_; }
 
   // IGameAdapter
   PlayerSnapshot readLocalPlayer() override { return player_; }
@@ -102,6 +106,9 @@ class SimGame : public IGameAdapter {
   void applyHitToLocalPlayer(const HurtEvent& hurt) override;
   void giveItem(uint16_t itemId) override { inventory_.push_back(itemId); }
   void takeItem(uint16_t itemId) override;
+  bool takeItems(uint16_t itemId, uint16_t count) override;
+  void freezeLocalPlayer(bool frozen) override { frozen_ = frozen; }
+  void showBanner(const std::string& text) override { banner_ = text; }
   void applyFarmTiles(const std::vector<FarmTile>& tiles) override;
   std::vector<FarmIntent> drainLocalFarmActions() override { return std::exchange(farmActions_, {}); }
   void reviveLocalPlayer(uint16_t mapId, const Vec3& pos, uint32_t hp) override;
@@ -138,6 +145,8 @@ class SimGame : public IGameAdapter {
   std::vector<uint16_t> inventory_;
   std::map<uint32_t, FarmTile> farmMirror_;
   std::vector<FarmIntent> farmActions_;
+  bool frozen_ = false;
+  std::string banner_;
 };
 
 }  // namespace coop

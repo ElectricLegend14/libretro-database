@@ -24,6 +24,7 @@ struct SessionConfig {
   double timeoutSec = 5;
   double leashSec = 10;          // guest only
   std::function<void(const std::string&)> log;
+  std::function<void()> onHostSleep;  // guest only: the host went to bed (save now)
 };
 
 // The partner, smoothed. See Interpolated.
@@ -40,6 +41,9 @@ class Session {
   virtual void update(double now) = 0;
   virtual bool connected() const = 0;
   virtual void sendChat(const std::string& text) = 0;
+  // Takes the items from the local inventory and hands them to the partner.
+  // If the link drops before the partner confirms, they come back.
+  virtual bool giveToPartner(uint16_t itemId, uint16_t count) = 0;
   virtual void leave() = 0;
 };
 

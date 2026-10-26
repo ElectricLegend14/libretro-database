@@ -74,7 +74,27 @@ class Peer {
         if (auto msg = decodeMessage(packet->body, packet->bodyLen)) onStranger(d->from, *msg, now);
       }
     }
-    if (conn_) conn_->update(now);
+    if (conn_) {
+      conn_->update(now);
+      std::erase_if(gifts_, [this](const PendingGift& g) { return conn_->acked(g.seq); });
+    }
+  }
+
+  // Takes the items now; they come back if the partner never confirms.
+  bool giveGift(uint16_t itemId, uint16_t count) {
+    if (!conn_ || count == 0 || !game_.takeItems(itemId, count)) return false;
+    ItemGift gift{itemId, count};
+    gifts_.push_back({conn_->sendReliable(gift), gift});
+    return true;
+  }
+
+  // Messages both sides handle the same way. Returns true if it was one.
+  bool onSharedMessage(const Message& msg) {
+    auto* gift = std::get_if<ItemGift>(&msg);
+    if (!gift) return false;
+    game_.giveItems(gift->itemId, gift->count);
+    log("Received " + std::to_string(gift->count) + " of item " + std::to_string(gift->itemId));
+    return true;
   }
 
   virtual void onMessage(const Message& msg, double now) = 0;
@@ -111,6 +131,14 @@ class Peer {
   // Ends the link: optionally says goodbye, then forgets the partner.
   void disconnect(std::optional<GoodbyeReason> goodbye) {
     if (conn_ && goodbye) conn_->sendUnreliable(Goodbye{*goodbye});
+    // Gifts the partner never confirmed go back. (If only the confirmation
+    // was lost, both sides end up with them: better than neither.)
+    for (auto& g : gifts_) {
+      if (conn_ && conn_->acked(g.seq)) continue;
+      game_.giveItems(g.gift.itemId, g.gift.count);
+      log("Gift of item " + std::to_string(g.gift.itemId) + " didn't arrive; returned it");
+    }
+    gifts_.clear();
     bool wasConnected = conn_.has_value();
     conn_.reset();
     remote_.reset();
@@ -129,6 +157,11 @@ class Peer {
   double lastHeard_ = 0;
 
  private:
+  struct PendingGift {
+    uint16_t seq;
+    ItemGift gift;
+  };
+
   void hidePartner() {
     if (!shown_) return;
     game_.hideRemotePlayer();
@@ -137,6 +170,7 @@ class Peer {
 
   std::optional<double> nextTick_;
   bool shown_ = false;
+  std::vector<PendingGift> gifts_;
 };
 
 class HostSession final : public Session, Peer {
@@ -170,10 +204,13 @@ class HostSession final : public Session, Peer {
     if (conn_) conn_->sendReliable(Chat{text});
   }
 
+  bool giveToPartner(uint16_t itemId, uint16_t count) override { return giveGift(itemId, count); }
+
   void leave() override { disconnect(GoodbyeReason::Quit); }
 
  private:
   void onMessage(const Message& msg, double now) override {
+    if (onSharedMessage(msg)) return;
     if (auto* hello = std::get_if<Hello>(&msg)) {
       onHello(conn_->peer(), *hello, now);
     } else if (auto* state = std::get_if<PlayerState>(&msg)) {
@@ -367,6 +404,7 @@ class GuestSessionImpl final : public GuestSession, Peer {
     if (tickDue(now)) conn_->sendUnreliable(localState());
     drawPartner(now);
     drawEntities(now);
+    followHostStatus();
     sendActions();
     if (faintedAt_ && now - *faintedAt_ >= kFaintSec) wakeUp(now);
     if (!faintedAt_) leash(now);
@@ -378,6 +416,8 @@ class GuestSessionImpl final : public GuestSession, Peer {
   void sendChat(const std::string& text) override {
     if (conn_) conn_->sendReliable(Chat{text});
   }
+
+  bool giveToPartner(uint16_t itemId, uint16_t count) override { return giveGift(itemId, count); }
 
   void leave() override {
     disconnect(GoodbyeReason::Quit);
@@ -402,6 +442,7 @@ class GuestSessionImpl final : public GuestSession, Peer {
   }
 
   void onMessage(const Message& msg, double now) override {
+    if (onSharedMessage(msg)) return;
     if (auto* state = std::get_if<PlayerState>(&msg)) {
       remote_.onState(*state, now);
     } else if (auto* clock = std::get_if<ClockSync>(&msg)) {
@@ -475,7 +516,7 @@ class GuestSessionImpl final : public GuestSession, Peer {
     auto attacks = game_.drainLocalAttacks();
     auto pickups = game_.drainLocalPickups();
     auto farming = game_.drainLocalFarmActions();
-    if (faintedAt_) return;  // can't act while fainted
+    if (faintedAt_ || frozen_) return;  // can't act while fainted or in the host's cutscene
     for (auto& intent : attacks) conn_->sendReliable(AttackRequest{nextRequestId_++, intent});
     for (auto id : pickups) conn_->sendReliable(PickupRequest{id});
     for (auto& intent : farming) {
@@ -524,6 +565,27 @@ class GuestSessionImpl final : public GuestSession, Peer {
     }
   }
 
+  // Freezes the guest through the host's cutscenes, and saves the guest's
+  // character when the host goes to bed (the day ends for both).
+  void followHostStatus() {
+    auto host = remote_.latest();
+    uint8_t status = host ? host->status : 0;
+
+    bool cutscene = status & PlayerStatus::kInCutscene;
+    if (cutscene != frozen_) {
+      frozen_ = cutscene;
+      game_.freezeLocalPlayer(cutscene);
+      game_.showBanner(cutscene ? "The host is in a cutscene" : "");
+    }
+
+    bool sleeping = status & PlayerStatus::kSleeping;
+    if (sleeping && !hostSleeping_) {
+      log("The host went to sleep; saving the guest character");
+      if (cfg_.onHostSleep) cfg_.onHostSleep();
+    }
+    hostSleeping_ = sleeping;
+  }
+
   void wakeUp(double now) {
     faintedAt_.reset();
     graceUntil_ = now + kWakeGraceSec;
@@ -535,6 +597,12 @@ class GuestSessionImpl final : public GuestSession, Peer {
   }
 
   void onDisconnected() override {
+    if (frozen_) {
+      game_.freezeLocalPlayer(false);
+      game_.showBanner("");
+      frozen_ = false;
+    }
+    hostSleeping_ = false;
     clearWorld();
     mismatches_ = 0;
     pendingFarm_.clear();
@@ -573,6 +641,8 @@ class GuestSessionImpl final : public GuestSession, Peer {
   std::map<uint32_t, FarmIntent> pendingFarm_;  // by request ID
   std::map<uint32_t, FarmTile> farm_;           // what the host has sent, by FarmTile::key
   int mismatches_ = 0;
+  bool frozen_ = false;
+  bool hostSleeping_ = false;
   uint32_t nextRequestId_ = 1;
   std::optional<double> faintedAt_;
   double graceUntil_ = 0;
