@@ -10,6 +10,7 @@ on:
 jobs:
   linux:
     name: Linux (ASan + UBSan)
+    timeout-minutes: 20
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -24,6 +25,7 @@ jobs:
 
   windows:
     name: Windows (MSVC)
+    timeout-minutes: 20
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -46,11 +48,16 @@ jobs:
 
   mingw:
     name: Windows (MinGW cross-compile)
+    timeout-minutes: 20
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - name: Install MinGW-w64
-        run: sudo apt-get update && sudo apt-get install -y g++-mingw-w64-x86-64
+        # Retries and a step timeout: a stalled mirror once hung this step for good.
+        timeout-minutes: 8
+        run: |
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y --no-install-recommends g++-mingw-w64-x86-64
       - name: Configure
         run: >
           cmake -S rf4s-coop -B build -DCMAKE_BUILD_TYPE=Release
