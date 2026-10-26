@@ -47,12 +47,6 @@ sockaddr_in toSockaddr(const Endpoint& e) {
 
 }  // namespace
 
-std::string Endpoint::toString() const {
-  return std::to_string(ipv4 >> 24) + "." + std::to_string((ipv4 >> 16) & 0xFF) + "." +
-         std::to_string((ipv4 >> 8) & 0xFF) + "." + std::to_string(ipv4 & 0xFF) + ":" +
-         std::to_string(port);
-}
-
 std::optional<Endpoint> resolveIPv4(const std::string& host, uint16_t port) {
   if (!initSockets()) return std::nullopt;
   addrinfo hints{};

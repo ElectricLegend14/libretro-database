@@ -14,6 +14,8 @@ endif()
 # Portable core: protocol, networking, sync. Builds and tests on any OS.
 add_library(coop_core STATIC
   src/protocol.cpp
+  src/connection.cpp
+  src/transport.cpp
   src/udp.cpp
   src/session.cpp
   src/signature.cpp

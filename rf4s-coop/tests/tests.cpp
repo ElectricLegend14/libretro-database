@@ -1,12 +1,15 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <deque>
 #include <functional>
 #include <limits>
+#include <map>
 #include <string>
 #include <vector>
 
 #include "coop/config.hpp"
+#include "coop/connection.hpp"
 #include "coop/protocol.hpp"
 #include "coop/session.hpp"
 #include "coop/signature.hpp"
@@ -44,8 +47,8 @@ int g_failures = 0;
 
 template <typename T>
 std::optional<T> roundTrip(const T& msg) {
-  auto bytes = encode(msg);
-  auto decoded = decode(bytes.data(), bytes.size());
+  auto bytes = encodeMessage(msg);
+  auto decoded = decodeMessage(bytes.data(), bytes.size());
   if (!decoded || !std::holds_alternative<T>(*decoded)) return std::nullopt;
   return std::get<T>(*decoded);
 }
@@ -54,24 +57,74 @@ float distance(const Vec3& a, const Vec3& b) {
   return std::sqrt((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y) + (a.z - b.z) * (a.z - b.z));
 }
 
-// Steps a host and a guest through simulated time over real loopback UDP.
+// A perfect in-memory network: datagrams arrive instantly and in order.
+// Wrap ports in ConditionedTransport to make it worse.
+class MemoryNet {
+ public:
+  static constexpr uint32_t kIp = 0x7F000001;
+
+  class Port : public ITransport {
+   public:
+    Port(MemoryNet& net, uint16_t port) : net_(net), self_{kIp, port} {}
+    bool sendTo(const Endpoint& to, const std::vector<uint8_t>& data) override {
+      net_.inbox_[to.port].push_back({self_, data});
+      return true;
+    }
+    std::optional<Datagram> receive() override {
+      auto& q = net_.inbox_[self_.port];
+      if (q.empty()) return std::nullopt;
+      Datagram d = std::move(q.front());
+      q.pop_front();
+      return d;
+    }
+    uint16_t localPort() const override { return self_.port; }
+
+   private:
+    MemoryNet& net_;
+    Endpoint self_;
+  };
+
+  std::unique_ptr<ITransport> open(uint16_t port, NetworkConditions cond = {}) {
+    inbox_[port].clear();
+    return std::make_unique<ConditionedTransport>(std::make_unique<Port>(*this, port), cond);
+  }
+  static Endpoint at(uint16_t port) { return {kIp, port}; }
+
+ private:
+  std::map<uint16_t, std::deque<Datagram>> inbox_;
+};
+
+bool contains(const std::vector<std::string>& log, const std::string& line) {
+  for (auto& l : log) {
+    if (l == line) return true;
+  }
+  return false;
+}
+
+// Steps a host and a guest through simulated time.
 struct Pair {
+  static constexpr uint16_t kHostPort = 7777, kGuestPort = 5000;
+
+  MemoryNet net;
   SimGame hostGame{1, 10.f, 1.f};
   SimGame guestGame{1, 3.f, -1.f};
+  std::vector<std::string> hostLog, guestLog;
   std::unique_ptr<Session> host;
   std::unique_ptr<GuestSession> guest;
   double t = 0;
 
-  explicit Pair(uint16_t port, uint32_t guestBuild = 7) {
-    SessionConfig hc;
-    hc.port = port;
-    hc.gameBuild = 7;
-    host = createHost(hostGame, hc);
-    SessionConfig gc;
-    gc.port = port;
-    gc.hostAddress = "127.0.0.1";
-    gc.gameBuild = guestBuild;
-    guest = createGuest(guestGame, gc);
+  explicit Pair(NetworkConditions cond = {}, uint32_t guestBuild = 7) {
+    host = createHost(hostGame, config(7, hostLog, "Host"), net.open(kHostPort, cond));
+    cond.seed += 1;
+    guest = createGuest(guestGame, config(guestBuild, guestLog, "Guest"), net.open(kGuestPort, cond), MemoryNet::at(kHostPort));
+  }
+
+  SessionConfig config(uint32_t build, std::vector<std::string>& log, const std::string& name) {
+    SessionConfig c;
+    c.gameBuild = build;
+    c.playerName = name;
+    c.log = [&log](const std::string& line) { log.push_back(line); };
+    return c;
   }
 
   void run(double seconds, bool hostRuns = true) {
@@ -88,11 +141,12 @@ struct Pair {
 // ------------------------------------------------------------------ protocol
 
 TEST(protocol_round_trips_every_message) {
-  auto hello = roundTrip(Hello{3, 0xDEADBEEF, "Frey"});
-  CHECK(hello && hello->modVersion == 3 && hello->gameBuild == 0xDEADBEEF && hello->name == "Frey");
+  auto hello = roundTrip(Hello{3, 0xDEADBEEF, 99, "Frey"});
+  CHECK(hello && hello->modVersion == 3 && hello->gameBuild == 0xDEADBEEF && hello->nonce == 99 &&
+        hello->name == "Frey");
 
-  auto welcome = roundTrip(Welcome{false, 0, "Session is full"});
-  CHECK(welcome && !welcome->accepted && welcome->reason == "Session is full");
+  auto welcome = roundTrip(Welcome{false, 0, 99, "Session is full"});
+  CHECK(welcome && !welcome->accepted && welcome->nonce == 99 && welcome->reason == "Session is full");
 
   PlayerState state;
   state.tick = 123456;
@@ -111,31 +165,46 @@ TEST(protocol_round_trips_every_message) {
   CHECK(bye && bye->reason == GoodbyeReason::Timeout);
 }
 
-TEST(protocol_rejects_malformed_packets) {
-  auto bytes = encode(Chat{"hi"});
-  CHECK(decode(bytes.data(), bytes.size()));
-
-  auto wrongVersion = bytes;
-  wrongVersion[0] = kProtocolVersion + 1;
-  CHECK(!decode(wrongVersion.data(), wrongVersion.size()));
-
-  CHECK(!decode(bytes.data(), bytes.size() - 1));  // truncated
+TEST(protocol_rejects_malformed_messages) {
+  auto bytes = encodeMessage(Chat{"hi"});
+  CHECK(decodeMessage(bytes.data(), bytes.size()));
+  CHECK(!decodeMessage(bytes.data(), bytes.size() - 1));  // truncated
   auto trailing = bytes;
   trailing.push_back(0);
-  CHECK(!decode(trailing.data(), trailing.size()));
+  CHECK(!decodeMessage(trailing.data(), trailing.size()));
 
   auto unknownType = bytes;
-  unknownType[1] = 0x77;
-  CHECK(!decode(unknownType.data(), unknownType.size()));
-  CHECK(!decode(nullptr, 0));
+  unknownType[0] = 0x77;
+  CHECK(!decodeMessage(unknownType.data(), unknownType.size()));
+  CHECK(!decodeMessage(nullptr, 0));
 
   PlayerState bad;
   bad.body.pos.x = std::numeric_limits<float>::quiet_NaN();
-  auto nan = encode(bad);
-  CHECK(!decode(nan.data(), nan.size()));
+  auto nan = encodeMessage(bad);
+  CHECK(!decodeMessage(nan.data(), nan.size()));
 
-  auto badClock = encode(ClockSync{{1, 0, 1, 25, 0}});
-  CHECK(!decode(badClock.data(), badClock.size()));
+  auto badClock = encodeMessage(ClockSync{{1, 0, 1, 25, 0}});
+  CHECK(!decodeMessage(badClock.data(), badClock.size()));
+}
+
+TEST(protocol_frames_packets) {
+  auto body = encodeMessage(Chat{"hi"});
+  auto packet = makePacket(PacketKind::Reliable, 0xBEEF, body);
+  auto view = parsePacket(packet.data(), packet.size());
+  CHECK(view && view->kind == PacketKind::Reliable && view->seq == 0xBEEF && view->bodyLen == body.size());
+
+  auto wrongVersion = packet;
+  wrongVersion[0] = kProtocolVersion + 1;
+  CHECK(!parsePacket(wrongVersion.data(), wrongVersion.size()));
+  auto badKind = packet;
+  badKind[1] = 9;
+  CHECK(!parsePacket(badKind.data(), badKind.size()));
+  CHECK(!parsePacket(packet.data(), 3));
+
+  auto ack = makePacket(PacketKind::Ack, 5, {});
+  CHECK(parsePacket(ack.data(), ack.size()));
+  auto ackWithBody = makePacket(PacketKind::Ack, 5, body);
+  CHECK(!parsePacket(ackWithBody.data(), ackWithBody.size()));
 }
 
 TEST(protocol_truncates_long_strings) {
@@ -232,11 +301,96 @@ TEST(remote_player_snaps_across_map_change_and_restart) {
   CHECK(v && v->pos.x == 7);
 }
 
+// ---------------------------------------------------------------- connection
+
+// Two connections joined by a (possibly bad) in-memory network.
+struct Link {
+  MemoryNet net;
+  std::unique_ptr<ITransport> ta, tb;
+  Connection a, b;
+  std::vector<Message> gotA, gotB;
+  double t = 0;
+
+  explicit Link(NetworkConditions cond = {})
+      : ta(net.open(1, cond)),
+        tb(net.open(2, NetworkConditions{cond.latencySec, cond.jitterSec, cond.lossRate, cond.duplicateRate,
+                                         cond.seed + 1})),
+        a(*ta, MemoryNet::at(2)),
+        b(*tb, MemoryNet::at(1)) {}
+
+  void pump(ITransport& transport, Connection& conn, std::vector<Message>& got) {
+    transport.advance(t);
+    while (auto d = transport.receive()) {
+      if (auto p = parsePacket(d->data.data(), d->data.size())) {
+        for (auto& m : conn.onPacket(*p)) got.push_back(std::move(m));
+      }
+    }
+    conn.update(t);
+  }
+
+  void run(double seconds) {
+    for (double end = t + seconds; t < end; t += 1.0 / 60) {
+      pump(*ta, a, gotA);
+      pump(*tb, b, gotB);
+    }
+  }
+};
+
+std::vector<std::string> chats(const std::vector<Message>& msgs) {
+  std::vector<std::string> out;
+  for (auto& m : msgs) {
+    if (auto* c = std::get_if<Chat>(&m)) out.push_back(c->text);
+  }
+  return out;
+}
+
+TEST(connection_delivers_reliable_in_order_on_a_bad_network) {
+  Link link({0.05, 0.08, 0.3, 0.2, 42});  // 50-130 ms, 30% loss, 20% duplicates
+  std::vector<std::string> sent;
+  for (int i = 0; i < 300; ++i) {
+    sent.push_back("msg " + std::to_string(i));
+    link.a.sendReliable(Chat{sent.back()});
+    if (i % 10 == 0) link.run(0.05);  // send in bursts while packets are in flight
+  }
+  link.run(5);
+  CHECK(chats(link.gotB) == sent);
+  CHECK(link.a.unackedCount() == 0);
+}
+
+TEST(connection_survives_sequence_wraparound) {
+  Link link;
+  std::vector<std::string> sent;
+  for (int i = 0; i < 70000; ++i) {
+    sent.push_back(std::to_string(i));
+    link.a.sendReliable(Chat{sent.back()});
+    if (i % 500 == 0) link.run(1.0 / 60);
+  }
+  link.run(0.5);
+  CHECK(chats(link.gotB) == sent);
+}
+
+TEST(connection_skips_an_undecodable_reliable_message) {
+  Link link;
+  // seq 0 holds garbage, seq 1 a real message; seq 1 must not wait forever.
+  link.ta->sendTo(MemoryNet::at(2), makePacket(PacketKind::Reliable, 0, {0x77, 1, 2}));
+  link.ta->sendTo(MemoryNet::at(2), makePacket(PacketKind::Reliable, 1, encodeMessage(Chat{"after"})));
+  link.run(0.1);
+  CHECK(chats(link.gotB) == std::vector<std::string>{"after"});
+}
+
+TEST(connection_refuses_sequences_far_ahead) {
+  Link link;
+  link.ta->sendTo(MemoryNet::at(2),
+                  makePacket(PacketKind::Reliable, Connection::kReceiveWindow + 5, encodeMessage(Chat{"x"})));
+  link.run(0.1);
+  CHECK(link.gotB.empty());
+  CHECK(link.gotA.empty());  // no ack came back, so the sender will retry later
+}
+
 // ------------------------------------------------------------------ sessions
 
 TEST(guest_joins_and_follows_host_smoothly) {
-  Pair p(47711);
-  CHECK(p.host && p.guest);
+  Pair p;
   p.run(5);
   CHECK(p.host->connected() && p.guest->connected());
 
@@ -247,8 +401,46 @@ TEST(guest_joins_and_follows_host_smoothly) {
   CHECK(seenByHost && distance(seenByHost->pos, p.guestGame.positionAt(p.t - 0.1)) < 0.5f);
 }
 
+TEST(sessions_work_over_real_udp) {
+  SimGame hostGame(1, 10.f, 1.f), guestGame(1, 3.f, -1.f);
+  SessionConfig hc;
+  hc.port = 47711;
+  hc.gameBuild = 7;
+  auto host = createHost(hostGame, hc);
+  SessionConfig gc = hc;
+  gc.hostAddress = "127.0.0.1";
+  auto guest = createGuest(guestGame, gc);
+  CHECK(host && guest);
+  if (!host || !guest) return;
+  for (double t = 0; t < 2; t += 1.0 / 60) {
+    hostGame.advance(1.0 / 60);
+    host->update(t);
+    guest->update(t);
+  }
+  CHECK(host->connected() && guest->connected() && guestGame.remote());
+}
+
+TEST(sessions_hold_up_on_a_bad_network) {
+  // 60-100 ms each way, 10% loss, 5% duplicates.
+  Pair p({0.06, 0.04, 0.1, 0.05, 7});
+  p.run(4);
+  CHECK(p.host->connected() && p.guest->connected());
+
+  for (int i = 0; i < 20; ++i) p.guest->sendChat("line " + std::to_string(i));
+  p.run(3);
+  int found = 0;
+  for (auto& line : p.hostLog) {
+    if (line == "Guest: line " + std::to_string(found)) ++found;  // in order
+  }
+  CHECK(found == 20);
+
+  // Position lags by the 0.1 s buffer plus the one-way latency.
+  auto seen = p.guestGame.remote();
+  CHECK(seen && distance(seen->pos, p.hostGame.positionAt(p.t - 0.18)) < 1.5f);
+}
+
 TEST(guest_clock_follows_host) {
-  Pair p(47712);
+  Pair p;
   p.hostGame.writeClock({1, 2, 15, 18, 30});
   p.run(3);
   auto host = p.hostGame.readClock();
@@ -259,19 +451,18 @@ TEST(guest_clock_follows_host) {
 }
 
 TEST(host_rejects_a_different_game_build) {
-  Pair p(47713, 8);
+  Pair p({}, 8);
   p.run(2);
   CHECK(p.guest->failed() && !p.guest->connected() && !p.host->connected());
+  CHECK(contains(p.guestLog, "Host refused: Game version mismatch"));
 }
 
 TEST(session_holds_only_one_guest) {
-  Pair p(47714);
+  Pair p;
   SimGame thirdGame(1, 1.f, 1.f);
   SessionConfig c;
-  c.port = 47714;
-  c.hostAddress = "127.0.0.1";
   c.gameBuild = 7;
-  auto third = createGuest(thirdGame, c);
+  auto third = createGuest(thirdGame, c, p.net.open(6000), MemoryNet::at(Pair::kHostPort));
   const double dt = 1.0 / 60;
   for (int i = 0; i < 120; ++i, p.t += dt) {
     p.host->update(p.t);
@@ -282,8 +473,26 @@ TEST(session_holds_only_one_guest) {
   CHECK(third->failed());
 }
 
+TEST(restarted_guest_on_the_same_address_gets_back_in) {
+  Pair p;
+  p.run(1);
+  for (int i = 0; i < 3; ++i) p.guest->sendChat("before " + std::to_string(i));
+  p.run(1);
+  CHECK(p.host->connected() && contains(p.hostLog, "Guest: before 2"));
+  // The guest's game crashes and restarts from the same address and port:
+  // a new nonce tells the host it's a new connection, not a stranger.
+  p.guestLog.clear();
+  p.guest = createGuest(p.guestGame, p.config(7, p.guestLog, "Guest"), p.net.open(Pair::kGuestPort),
+                        MemoryNet::at(Pair::kHostPort));
+  p.run(1);
+  CHECK(p.guest->connected() && contains(p.guestLog, "Joined the host"));
+  for (int i = 0; i < 3; ++i) p.guest->sendChat("back " + std::to_string(i));
+  p.run(1);
+  CHECK(contains(p.hostLog, "Guest: back 2"));
+}
+
 TEST(guest_is_leashed_to_the_host_map) {
-  Pair p(47715);
+  Pair p;
   p.guestGame.warpLocalPlayer(9, {});  // guest wanders off to another map
   p.run(5);
   CHECK(p.guestGame.warps() == 1);  // not yet: leash waits 10 s
@@ -295,18 +504,18 @@ TEST(guest_is_leashed_to_the_host_map) {
 }
 
 TEST(leaving_and_timeouts_drop_the_partner) {
-  Pair p(47716);
+  Pair p;
   p.run(2);
   p.guest->leave();
   p.run(0.5);
   CHECK(!p.host->connected() && !p.hostGame.remote());
 
-  Pair q(47717);
+  Pair q;
   q.run(2);
   q.run(6, /*hostRuns=*/false);  // host freezes
   CHECK(!q.guest->connected() && !q.guestGame.remote() && !q.guest->failed());
   q.run(2);  // host comes back; guest rejoins
-  CHECK(q.guest->connected());
+  CHECK(q.guest->connected() && q.host->connected());
 }
 
 }  // namespace

@@ -86,11 +86,13 @@ class Reader {
 void write(Writer& w, const Hello& m) {
   w.u16(m.modVersion);
   w.u32(m.gameBuild);
+  w.u32(m.nonce);
   w.str(m.name);
 }
 void write(Writer& w, const Welcome& m) {
   w.u8(m.accepted ? 1 : 0);
   w.u8(m.slot);
+  w.u32(m.nonce);
   w.str(m.reason);
 }
 void write(Writer& w, const PlayerState& m) {
@@ -114,12 +116,14 @@ void write(Writer& w, const ClockSync& m) {
 void write(Writer& w, const Chat& m) { w.str(m.text); }
 void write(Writer& w, const Goodbye& m) { w.u8(static_cast<uint8_t>(m.reason)); }
 
-bool read(Reader& r, Hello& m) { return r.u16(m.modVersion) && r.u32(m.gameBuild) && r.str(m.name); }
+bool read(Reader& r, Hello& m) {
+  return r.u16(m.modVersion) && r.u32(m.gameBuild) && r.u32(m.nonce) && r.str(m.name);
+}
 bool read(Reader& r, Welcome& m) {
   uint8_t accepted;
   if (!r.u8(accepted) || accepted > 1) return false;
   m.accepted = accepted == 1;
-  return r.u8(m.slot) && r.str(m.reason);
+  return r.u8(m.slot) && r.u32(m.nonce) && r.str(m.reason);
 }
 bool read(Reader& r, PlayerState& m) {
   return r.u32(m.tick) && r.u16(m.body.mapId) && r.vec3(m.body.pos) && r.f32(m.body.facing) &&
@@ -147,9 +151,8 @@ std::optional<Message> readAs(Reader& r) {
 
 }  // namespace
 
-std::vector<uint8_t> encode(const Message& msg) {
+std::vector<uint8_t> encodeMessage(const Message& msg) {
   Writer w;
-  w.u8(kProtocolVersion);
   std::visit(
       [&w](const auto& m) {
         w.u8(static_cast<uint8_t>(m.kType));
@@ -159,10 +162,10 @@ std::vector<uint8_t> encode(const Message& msg) {
   return w.take();
 }
 
-std::optional<Message> decode(const uint8_t* data, size_t len) {
+std::optional<Message> decodeMessage(const uint8_t* data, size_t len) {
   Reader r(data, len);
-  uint8_t version, type;
-  if (!r.u8(version) || version != kProtocolVersion || !r.u8(type)) return std::nullopt;
+  uint8_t type;
+  if (!r.u8(type)) return std::nullopt;
   switch (static_cast<MsgType>(type)) {
     case MsgType::Hello: return readAs<Hello>(r);
     case MsgType::Welcome: return readAs<Welcome>(r);
@@ -172,6 +175,28 @@ std::optional<Message> decode(const uint8_t* data, size_t len) {
     case MsgType::Goodbye: return readAs<Goodbye>(r);
   }
   return std::nullopt;
+}
+
+std::vector<uint8_t> makePacket(PacketKind kind, uint16_t seq, const std::vector<uint8_t>& body) {
+  Writer w;
+  w.u8(kProtocolVersion);
+  w.u8(static_cast<uint8_t>(kind));
+  w.u16(seq);
+  auto packet = w.take();
+  packet.insert(packet.end(), body.begin(), body.end());
+  return packet;
+}
+
+std::optional<PacketView> parsePacket(const uint8_t* data, size_t len) {
+  Reader r(data, len);
+  uint8_t version, kind;
+  uint16_t seq;
+  if (!r.u8(version) || version != kProtocolVersion || !r.u8(kind) || !r.u16(seq)) return std::nullopt;
+  if (kind > static_cast<uint8_t>(PacketKind::Ack)) return std::nullopt;
+  constexpr size_t kHeader = 4;
+  PacketView view{static_cast<PacketKind>(kind), seq, data + kHeader, len - kHeader};
+  if ((view.kind == PacketKind::Ack) != (view.bodyLen == 0)) return std::nullopt;
+  return view;
 }
 
 }  // namespace coop

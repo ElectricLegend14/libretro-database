@@ -3,6 +3,10 @@
 #include <algorithm>
 #include <cmath>
 #include <numbers>
+#include <random>
+
+#include "coop/connection.hpp"
+#include "coop/udp.hpp"
 
 namespace coop {
 
@@ -63,20 +67,59 @@ std::optional<PlayerSnapshot> RemotePlayer::sample(double tick) const {
 
 namespace {
 
-// What host and guest share: the socket, the tick clock and the partner.
+uint32_t randomNonce() {
+  static std::mt19937 rng(std::random_device{}());
+  uint32_t n;
+  do n = static_cast<uint32_t>(rng()); while (n == 0);
+  return n;
+}
+
+// What host and guest share: the transport, the link to the partner, the
+// tick clock and the partner's body.
 class Peer {
  protected:
-  Peer(IGameAdapter& game, SessionConfig config, UdpSocket socket)
+  Peer(IGameAdapter& game, SessionConfig config, std::unique_ptr<ITransport> transport)
       : game_(game),
         cfg_(std::move(config)),
-        sock_(std::move(socket)),
+        transport_(std::move(transport)),
         remote_(cfg_.tickRate, cfg_.interpDelayTicks) {}
 
   void log(const std::string& line) {
     if (cfg_.log) cfg_.log(line);
   }
 
-  void send(const Endpoint& to, const Message& msg) { sock_.sendTo(to, encode(msg)); }
+  // Sends one message outside any connection, e.g. a handshake reply.
+  void sendLoose(const Endpoint& to, const Message& msg) {
+    transport_->sendTo(to, makePacket(PacketKind::Unreliable, 0, encodeMessage(msg)));
+  }
+
+  // Reads every waiting datagram. Packets from the partner go through the
+  // connection; anything else is offered to onStranger as a loose message.
+  void pump(double now) {
+    transport_->advance(now);
+    while (auto d = transport_->receive()) {
+      auto packet = parsePacket(d->data.data(), d->data.size());
+      if (!packet) continue;
+      if (conn_ && d->from == conn_->peer()) {
+        lastHeard_ = now;
+        for (auto& msg : conn_->onPacket(*packet)) {
+          onMessage(msg, now);
+          if (!conn_) break;  // the message ended the connection
+        }
+      } else if (packet->kind == PacketKind::Unreliable) {
+        if (auto msg = decodeMessage(packet->body, packet->bodyLen)) onStranger(d->from, *msg, now);
+      }
+    }
+    if (conn_) conn_->update(now);
+  }
+
+  virtual void onMessage(const Message& msg, double now) = 0;
+  virtual void onStranger(const Endpoint& from, const Message& msg, double now) = 0;
+
+  // Silent for too long, or a reliable message stuck for too long.
+  bool linkLost(double now) const {
+    return conn_ && (now - lastHeard_ > cfg_.timeoutSec || conn_->oldestUnackedAge() > cfg_.timeoutSec);
+  }
 
   // True once per network tick; advances tick_.
   bool tickDue(double now) {
@@ -101,16 +144,21 @@ class Peer {
     }
   }
 
-  void forgetPartner() {
+  // Ends the link: optionally says goodbye, then forgets the partner.
+  void disconnect(std::optional<GoodbyeReason> goodbye) {
+    if (conn_ && goodbye) conn_->sendUnreliable(Goodbye{*goodbye});
+    conn_.reset();
     remote_.reset();
     hidePartner();
   }
 
   IGameAdapter& game_;
   SessionConfig cfg_;
-  UdpSocket sock_;
+  std::unique_ptr<ITransport> transport_;
+  std::optional<Connection> conn_;
   RemotePlayer remote_;
   uint32_t tick_ = 0;
+  double lastHeard_ = 0;
 
  private:
   void hidePartner() {
@@ -125,166 +173,149 @@ class Peer {
 
 class HostSession final : public Session, Peer {
  public:
-  HostSession(IGameAdapter& game, SessionConfig config, UdpSocket socket)
-      : Peer(game, std::move(config), std::move(socket)) {
-    log("Hosting on port " + std::to_string(sock_.localPort()));
+  HostSession(IGameAdapter& game, SessionConfig config, std::unique_ptr<ITransport> transport)
+      : Peer(game, std::move(config), std::move(transport)) {
+    log("Hosting on port " + std::to_string(transport_->localPort()));
   }
 
   void update(double now) override {
-    while (auto d = sock_.receive()) handle(*d, now);
-
-    if (guest_ && now - lastHeard_ > cfg_.timeoutSec) {
+    pump(now);
+    if (linkLost(now)) {
       log(guestName_ + " timed out");
-      dropGuest();
+      disconnect(GoodbyeReason::Timeout);
     }
-    if (tickDue(now) && guest_) {
-      send(*guest_, localState());
-      if (tick_ % clockEveryTicks() == 0) send(*guest_, ClockSync{game_.readClock()});
+    if (tickDue(now) && conn_) {
+      conn_->sendUnreliable(localState());
+      if (tick_ % clockEveryTicks() == 0) conn_->sendUnreliable(ClockSync{game_.readClock()});
     }
-    if (guest_) drawPartner(now);
+    if (conn_) drawPartner(now);
   }
 
-  bool connected() const override { return guest_.has_value(); }
+  bool connected() const override { return conn_.has_value(); }
 
   void sendChat(const std::string& text) override {
-    if (guest_) send(*guest_, Chat{text});
+    if (conn_) conn_->sendReliable(Chat{text});
   }
 
-  void leave() override {
-    if (!guest_) return;
-    send(*guest_, Goodbye{GoodbyeReason::Quit});
-    dropGuest();
-  }
+  void leave() override { disconnect(GoodbyeReason::Quit); }
 
  private:
-  void handle(const Datagram& d, double now) {
-    auto msg = decode(d.data.data(), d.data.size());
-    if (!msg) return;
-    if (auto* hello = std::get_if<Hello>(&*msg)) {
-      onHello(d.from, *hello, now);
-      return;
-    }
-    if (!guest_ || d.from != *guest_) return;
-
-    lastHeard_ = now;
-    if (auto* state = std::get_if<PlayerState>(&*msg)) {
+  void onMessage(const Message& msg, double now) override {
+    if (auto* hello = std::get_if<Hello>(&msg)) {
+      onHello(conn_->peer(), *hello, now);
+    } else if (auto* state = std::get_if<PlayerState>(&msg)) {
       remote_.onState(*state, now);
-    } else if (auto* chat = std::get_if<Chat>(&*msg)) {
+    } else if (auto* chat = std::get_if<Chat>(&msg)) {
       log(guestName_ + ": " + chat->text);
-    } else if (std::holds_alternative<Goodbye>(*msg)) {
+    } else if (std::holds_alternative<Goodbye>(msg)) {
       log(guestName_ + " left");
-      dropGuest();
+      disconnect(std::nullopt);
     }
+  }
+
+  void onStranger(const Endpoint& from, const Message& msg, double now) override {
+    if (auto* hello = std::get_if<Hello>(&msg)) onHello(from, *hello, now);
   }
 
   void onHello(const Endpoint& from, const Hello& hello, double now) {
     auto reject = [&](const std::string& reason) {
-      send(from, Welcome{false, 0, reason});
+      sendLoose(from, Welcome{false, 0, hello.nonce, reason});
       log("Refused " + from.toString() + ": " + reason);
     };
-    if (guest_ && *guest_ != from) return reject("Session is full");
+    if (conn_ && conn_->peer() != from) return reject("Session is full");
     if (hello.modVersion != kModVersion) return reject("Mod version mismatch");
     if (hello.gameBuild != cfg_.gameBuild) return reject("Game version mismatch");
 
-    bool isNew = !guest_;
-    guest_ = from;
-    guestName_ = hello.name;
-    lastHeard_ = now;
-    send(from, Welcome{true, 1, ""});  // resent on a repeated Hello, in case it was lost
-    if (isNew) {
+    if (!conn_ || hello.nonce != guestNonce_) {
+      // A new guest, or the same one starting over: begin a fresh connection.
+      if (conn_) disconnect(std::nullopt);
+      conn_.emplace(*transport_, from);
+      guestNonce_ = hello.nonce;
+      guestName_ = hello.name;
+      lastHeard_ = now;
       log(guestName_ + " joined from " + from.toString());
-      send(from, ClockSync{game_.readClock()});
+      conn_->sendUnreliable(ClockSync{game_.readClock()});
     }
-  }
-
-  void dropGuest() {
-    guest_.reset();
-    forgetPartner();
+    // Answer every Hello: an earlier Welcome may have been lost.
+    conn_->sendUnreliable(Welcome{true, 1, hello.nonce, ""});
   }
 
   uint32_t clockEveryTicks() const { return std::max<uint32_t>(1, static_cast<uint32_t>(cfg_.tickRate)); }
 
-  std::optional<Endpoint> guest_;
+  uint32_t guestNonce_ = 0;
   std::string guestName_;
-  double lastHeard_ = 0;
 };
 
 class GuestSessionImpl final : public GuestSession, Peer {
  public:
-  GuestSessionImpl(IGameAdapter& game, SessionConfig config, UdpSocket socket, Endpoint host)
-      : Peer(game, std::move(config), std::move(socket)), host_(host) {
+  GuestSessionImpl(IGameAdapter& game, SessionConfig config, std::unique_ptr<ITransport> transport, Endpoint host)
+      : Peer(game, std::move(config), std::move(transport)), host_(host) {
     log("Joining " + host_.toString());
   }
 
   void update(double now) override {
-    while (auto d = sock_.receive()) {
-      if (d->from == host_) handle(*d, now);
-    }
-    if (stopped_) return;
+    pump(now);
+    if (failed_) return;
 
-    if (!welcomed_) {
+    if (!conn_) {
       if (now >= nextHello_) {
-        send(host_, Hello{kModVersion, cfg_.gameBuild, cfg_.playerName});
+        sendLoose(host_, Hello{kModVersion, cfg_.gameBuild, nonce_, cfg_.playerName});
         nextHello_ = now + 1;
       }
       return;
     }
-    if (now - lastHeard_ > cfg_.timeoutSec) {
+    if (linkLost(now)) {
       log("Lost the host; retrying");
-      welcomed_ = false;
-      forgetPartner();
+      disconnect(std::nullopt);
+      nonce_ = randomNonce();  // the host may have dropped us: start a new connection
       return;
     }
-    if (tickDue(now)) send(host_, localState());
+    if (tickDue(now)) conn_->sendUnreliable(localState());
     drawPartner(now);
     leash(now);
   }
 
-  bool connected() const override { return welcomed_; }
-  bool failed() const override { return stopped_; }
+  bool connected() const override { return conn_.has_value(); }
+  bool failed() const override { return failed_; }
 
   void sendChat(const std::string& text) override {
-    if (welcomed_) send(host_, Chat{text});
+    if (conn_) conn_->sendReliable(Chat{text});
   }
 
   void leave() override {
-    if (welcomed_) send(host_, Goodbye{GoodbyeReason::Quit});
-    welcomed_ = false;
-    stopped_ = true;
-    forgetPartner();
+    disconnect(GoodbyeReason::Quit);
+    failed_ = true;
   }
 
  private:
-  void handle(const Datagram& d, double now) {
-    auto msg = decode(d.data.data(), d.data.size());
-    if (!msg) return;
-
-    if (auto* welcome = std::get_if<Welcome>(&*msg)) {
-      if (!welcome->accepted) {
-        log("Host refused: " + welcome->reason);
-        stopped_ = true;
-      } else if (!welcomed_ && !stopped_) {
-        log("Joined the host");
-        welcomed_ = true;
-        lastHeard_ = now;
-      }
+  // Before the Welcome arrives, the host's packets come in loose.
+  void onStranger(const Endpoint& from, const Message& msg, double now) override {
+    if (from != host_) return;
+    auto* welcome = std::get_if<Welcome>(&msg);
+    if (!welcome || welcome->nonce != nonce_ || failed_) return;
+    if (!welcome->accepted) {
+      log("Host refused: " + welcome->reason);
+      failed_ = true;
       return;
     }
-    if (!welcomed_) return;
-
+    log("Joined the host");
+    conn_.emplace(*transport_, host_);
     lastHeard_ = now;
-    if (auto* state = std::get_if<PlayerState>(&*msg)) {
+  }
+
+  void onMessage(const Message& msg, double now) override {
+    if (auto* state = std::get_if<PlayerState>(&msg)) {
       remote_.onState(*state, now);
-    } else if (auto* clock = std::get_if<ClockSync>(&*msg)) {
+    } else if (auto* clock = std::get_if<ClockSync>(&msg)) {
       game_.writeClock(clock->clock);
-    } else if (auto* chat = std::get_if<Chat>(&*msg)) {
+    } else if (auto* chat = std::get_if<Chat>(&msg)) {
       log("Host: " + chat->text);
-    } else if (std::holds_alternative<Goodbye>(*msg)) {
+    } else if (std::holds_alternative<Goodbye>(msg)) {
       log("The host ended the session");
-      welcomed_ = false;
-      stopped_ = true;
-      forgetPartner();
+      disconnect(std::nullopt);
+      failed_ = true;
     }
+    // Repeated Welcomes once connected need nothing.
   }
 
   // Follow the host to their map if we've been apart for too long.
@@ -304,14 +335,17 @@ class GuestSessionImpl final : public GuestSession, Peer {
   }
 
   Endpoint host_;
-  bool welcomed_ = false;
-  bool stopped_ = false;
+  uint32_t nonce_ = randomNonce();
+  bool failed_ = false;
   double nextHello_ = 0;
-  double lastHeard_ = 0;
   std::optional<double> apartSince_;
 };
 
 }  // namespace
+
+std::unique_ptr<Session> createHost(IGameAdapter& game, SessionConfig config, std::unique_ptr<ITransport> transport) {
+  return std::make_unique<HostSession>(game, std::move(config), std::move(transport));
+}
 
 std::unique_ptr<Session> createHost(IGameAdapter& game, SessionConfig config) {
   auto socket = UdpSocket::open(config.port);
@@ -319,7 +353,12 @@ std::unique_ptr<Session> createHost(IGameAdapter& game, SessionConfig config) {
     if (config.log) config.log("Couldn't open UDP port " + std::to_string(config.port));
     return nullptr;
   }
-  return std::make_unique<HostSession>(game, std::move(config), std::move(*socket));
+  return createHost(game, std::move(config), std::make_unique<UdpSocket>(std::move(*socket)));
+}
+
+std::unique_ptr<GuestSession> createGuest(IGameAdapter& game, SessionConfig config,
+                                          std::unique_ptr<ITransport> transport, Endpoint host) {
+  return std::make_unique<GuestSessionImpl>(game, std::move(config), std::move(transport), host);
 }
 
 std::unique_ptr<GuestSession> createGuest(IGameAdapter& game, SessionConfig config) {
@@ -329,7 +368,7 @@ std::unique_ptr<GuestSession> createGuest(IGameAdapter& game, SessionConfig conf
     if (config.log) config.log("Couldn't reach host address '" + config.hostAddress + "'");
     return nullptr;
   }
-  return std::make_unique<GuestSessionImpl>(game, std::move(config), std::move(*socket), *host);
+  return createGuest(game, std::move(config), std::make_unique<UdpSocket>(std::move(*socket)), *host);
 }
 
 }  // namespace coop

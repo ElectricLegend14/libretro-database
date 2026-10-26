@@ -8,7 +8,7 @@
 
 #include "coop/game_adapter.hpp"
 #include "coop/protocol.hpp"
-#include "coop/udp.hpp"
+#include "coop/transport.hpp"
 
 namespace coop {
 
@@ -55,13 +55,19 @@ class Session {
 };
 
 // Host: the authority. Accepts one guest and sends its own state and the clock.
+// Opens a UDP socket on config.port; returns nullptr if it can't.
 std::unique_ptr<Session> createHost(IGameAdapter& game, SessionConfig config);
+std::unique_ptr<Session> createHost(IGameAdapter& game, SessionConfig config, std::unique_ptr<ITransport> transport);
 
-// Guest: follows the host. Reports `failed` when the host rejects it.
+// Guest: follows the host. `failed` turns true when the host refuses the guest
+// or ends the session; after that it stops trying to reconnect.
 class GuestSession : public Session {
  public:
   virtual bool failed() const = 0;
 };
+// Resolves config.hostAddress and opens a UDP socket; returns nullptr if it can't.
 std::unique_ptr<GuestSession> createGuest(IGameAdapter& game, SessionConfig config);
+std::unique_ptr<GuestSession> createGuest(IGameAdapter& game, SessionConfig config,
+                                          std::unique_ptr<ITransport> transport, Endpoint host);
 
 }  // namespace coop
