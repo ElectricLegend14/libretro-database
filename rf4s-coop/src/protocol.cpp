@@ -201,6 +201,13 @@ void write(Writer& w, const FarmTiles& m) {
     w.u8(t.growth);
   }
 }
+void write(Writer& w, const WorldCheck& m) {
+  w.u32(m.farmHash);
+  w.u32(m.farmTiles);
+  w.u32(m.entityHash);
+  w.u32(m.entities);
+}
+void write(Writer&, const ResyncRequest&) {}
 void write(Writer& w, const ClockSync& m) {
   w.u16(m.clock.year);
   w.u8(m.clock.season);
@@ -287,6 +294,10 @@ bool read(Reader& r, FarmTiles& m) {
   }
   return true;
 }
+bool read(Reader& r, WorldCheck& m) {
+  return r.u32(m.farmHash) && r.u32(m.farmTiles) && r.u32(m.entityHash) && r.u32(m.entities);
+}
+bool read(Reader&, ResyncRequest&) { return true; }
 bool read(Reader& r, ClockSync& m) {
   return r.u16(m.clock.year) && r.u8(m.clock.season) && r.u8(m.clock.day) && r.u8(m.clock.hour) &&
          r.u8(m.clock.minute) && m.clock.season < 4 && m.clock.hour < 24 && m.clock.minute < 60;
@@ -333,6 +344,8 @@ std::optional<Message> decodeMessage(const uint8_t* data, size_t len) {
     case MsgType::FarmRequest: return readAs<FarmRequest>(r);
     case MsgType::FarmResult: return readAs<FarmResult>(r);
     case MsgType::FarmTiles: return readAs<FarmTiles>(r);
+    case MsgType::WorldCheck: return readAs<WorldCheck>(r);
+    case MsgType::ResyncRequest: return readAs<ResyncRequest>(r);
     case MsgType::ClockSync: return readAs<ClockSync>(r);
     case MsgType::Chat: return readAs<Chat>(r);
     case MsgType::Goodbye: return readAs<Goodbye>(r);

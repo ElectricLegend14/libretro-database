@@ -79,6 +79,11 @@ class IGameAdapter {
   virtual void applyFarmTiles(const std::vector<FarmTile>&) {}
   virtual std::vector<FarmIntent> drainLocalFarmActions() { return {}; }
 
+  // The guest's character file: read it out of the game to save it, and put
+  // it back into the game after loading. nullopt = not supported yet.
+  virtual std::optional<GuestCharacter> readGuestCharacter() { return std::nullopt; }
+  virtual void applyGuestCharacter(const GuestCharacter&) {}
+
   // After fainting, the guest wakes beside the host.
   virtual void reviveLocalPlayer(uint16_t mapId, const Vec3& pos, uint32_t /*hp*/) { warpLocalPlayer(mapId, pos); }
 };

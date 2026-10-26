@@ -19,6 +19,7 @@
 
 #include "coop/config.hpp"
 #include "coop/session.hpp"
+#include "coop/storage.hpp"
 #include "rf4s_adapter.hpp"
 
 namespace {
@@ -91,6 +92,55 @@ std::optional<coop::ModConfig> loadConfig(const std::filesystem::path& path, Fil
   return config;
 }
 
+std::string timestamp() {
+  SYSTEMTIME t;
+  GetLocalTime(&t);
+  char stamp[32];
+  std::snprintf(stamp, sizeof stamp, "%04u%02u%02u-%02u%02u%02u", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute,
+                t.wSecond);
+  return stamp;
+}
+
+// Copies the game's saves aside before co-op touches anything.
+void backUpSaves(const coop::ModConfig& config, const std::filesystem::path& dir, FileLog& log) {
+  if (config.backupKeep == 0) return;
+  if (config.saveDir.empty()) {
+    log("Tip: set save_dir in rf4s-coop.ini to back up your saves before each session");
+    return;
+  }
+  std::string error;
+  std::filesystem::path saves(std::u8string(config.saveDir.begin(), config.saveDir.end()));  // the .ini is UTF-8
+  auto where = coop::backupSaves(saves, dir / "save-backups", timestamp(), config.backupKeep, error);
+  log(where ? "Saves backed up to " + where->string() : "Save backup failed: " + error);
+}
+
+// The guest's character lives next to the DLL, never in the game's slots.
+class CharacterFile {
+ public:
+  CharacterFile(std::filesystem::path file, coop::IGameAdapter& game, FileLog& log)
+      : file_(std::move(file)), game_(game), log_(log) {}
+
+  void load() {
+    std::string error;
+    if (auto c = coop::loadCharacter(file_, error)) {
+      game_.applyGuestCharacter(*c);
+      log_("Loaded guest character " + c->name);
+    }
+  }
+
+  void save() {
+    auto c = game_.readGuestCharacter();
+    if (!c) return;  // not supported by the adapter yet
+    std::string error;
+    if (!coop::saveCharacter(file_, *c, error)) log_("Couldn't save the guest character: " + error);
+  }
+
+ private:
+  std::filesystem::path file_;
+  coop::IGameAdapter& game_;
+  FileLog& log_;
+};
+
 DWORD WINAPI run(LPVOID) {
   auto dir = modDirectory();
   FileLog log(dir / "rf4s-coop.log");
@@ -111,23 +161,35 @@ DWORD WINAPI run(LPVOID) {
   auto config = loadConfig(dir / "rf4s-coop.ini", log);
 
   std::unique_ptr<coop::Session> session;
+  std::optional<CharacterFile> character;
   if (!ready) {
     log("Some signatures or offsets are still unknown (src/win/layout.hpp), so co-op stays off");
   } else if (config) {
+    backUpSaves(*config, dir, log);
     config->session.gameBuild = image->build;
     config->session.log = logFn;
-    if (config->role == coop::Role::Host) session = coop::createHost(game, config->session);
-    else session = coop::createGuest(game, config->session);
+    if (config->role == coop::Role::Host) {
+      session = coop::createHost(game, config->session);
+    } else {
+      character.emplace(dir / "guest-character.bin", game, log);
+      character->load();
+      session = coop::createGuest(game, config->session);
+    }
   }
 
   // Runs beside the game's own loop rather than inside it. Good enough for
   // reading state; phase 2 moves this into a hook on the game's frame update.
   auto start = std::chrono::steady_clock::now();
   int frame = 0;
+  double nextCharacterSave = 60;
   while (!g_stop) {
     double now = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
     if (session) {
       session->update(now);
+      if (character && now >= nextCharacterSave) {
+        character->save();
+        nextCharacterSave = now + 60;
+      }
     } else if (game.hasPlayer() && ++frame % 60 == 0) {
       // Phase 0 gate: the live player position shows up in the log.
       auto p = game.readLocalPlayer();
@@ -139,6 +201,7 @@ DWORD WINAPI run(LPVOID) {
     Sleep(16);
   }
   if (session) session->leave();
+  if (character) character->save();
   return 0;
 }
 

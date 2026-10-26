@@ -2,6 +2,9 @@
 #include <cstdio>
 #include <cstring>
 #include <deque>
+#include <filesystem>
+#include <fstream>
+#include <random>
 #include <functional>
 #include <limits>
 #include <map>
@@ -14,6 +17,7 @@
 #include "coop/session.hpp"
 #include "coop/signature.hpp"
 #include "coop/sim_game.hpp"
+#include "coop/storage.hpp"
 
 using namespace coop;
 
@@ -251,6 +255,10 @@ TEST(config_parses_ini) {
   auto c = parseConfig("# comment\nrole = guest\nhost_address = 192.168.1.20\nport=9000\nname = Lest\n", error);
   CHECK(c && c->role == Role::Guest && c->session.hostAddress == "192.168.1.20" && c->session.port == 9000 &&
         c->session.playerName == "Lest");
+
+  auto saves = parseConfig("save_dir = C:\\Users\\me\\Saves\nbackup_keep = 3\n", error);
+  CHECK(saves && saves->saveDir == "C:\\Users\\me\\Saves" && saves->backupKeep == 3);
+  CHECK(!parseConfig("backup_keep = lots\n", error));
 
   CHECK(!parseConfig("role = guest\n", error));  // guest needs an address
   CHECK(!parseConfig("role = spectator\n", error));
@@ -793,6 +801,215 @@ TEST(guest_cannot_farm_out_of_reach_or_on_bad_soil) {
   a.settle();
   CHECK(a.guestGame.inventory() == std::vector<uint16_t>{5});  // seed kept
   for (auto& [key, t] : a.hostGame.farm()) CHECK(t.soil == Soil::Untilled);
+}
+
+// ------------------------------------------------------------- desync repair
+
+// Sits between the host and the network and corrupts the next reliable
+// message of a chosen type, re-sealing it so the reliable layer delivers and
+// acks it as if nothing happened. Simulates a sync bug.
+class Tamperer : public ITransport {
+ public:
+  explicit Tamperer(std::unique_ptr<ITransport> inner) : inner_(std::move(inner)) {}
+
+  std::function<bool(Message&)> corrupt;  // returns true once it changed something
+
+  bool sendTo(const Endpoint& to, const std::vector<uint8_t>& data) override {
+    auto packet = parsePacket(data.data(), data.size());
+    if (corrupt && packet && packet->kind == PacketKind::Reliable) {
+      auto msg = decodeMessage(packet->body, packet->bodyLen);
+      if (msg && corrupt(*msg)) {
+        corrupt = nullptr;
+        forged_ = packet->seq;
+        return inner_->sendTo(to, makePacket(PacketKind::Reliable, packet->seq, encodeMessage(*msg)));
+      }
+    }
+    // Resends of the forged sequence number keep the forged content.
+    if (packet && packet->kind == PacketKind::Reliable && forged_ == packet->seq) return true;
+    return inner_->sendTo(to, data);
+  }
+  std::optional<Datagram> receive() override { return inner_->receive(); }
+  uint16_t localPort() const override { return inner_->localPort(); }
+  void advance(double now) override { inner_->advance(now); }
+
+ private:
+  std::unique_ptr<ITransport> inner_;
+  std::optional<uint16_t> forged_;
+};
+
+// A Pair whose host sends through a Tamperer.
+struct TamperedPair {
+  MemoryNet net;
+  SimGame hostGame{1, 10.f, 1.f};
+  SimGame guestGame{1, 3.f, -1.f};
+  std::vector<std::string> hostLog, guestLog;
+  Tamperer* tamperer = nullptr;
+  std::unique_ptr<Session> host;
+  std::unique_ptr<GuestSession> guest;
+  double t = 0;
+
+  TamperedPair() {
+    auto tam = std::make_unique<Tamperer>(net.open(7777));
+    tamperer = tam.get();
+    SessionConfig hc, gc;
+    hc.gameBuild = gc.gameBuild = 7;
+    hc.log = [this](const std::string& l) { hostLog.push_back(l); };
+    gc.log = [this](const std::string& l) { guestLog.push_back(l); };
+    host = createHost(hostGame, hc, std::move(tam));
+    guest = createGuest(guestGame, gc, net.open(5000), MemoryNet::at(7777));
+  }
+
+  void run(double seconds) {
+    for (double end = t + seconds; t < end; t += 1.0 / 60) {
+      hostGame.advance(1.0 / 60);
+      guestGame.advance(1.0 / 60);
+      host->update(t);
+      guest->update(t);
+    }
+  }
+};
+
+TEST(a_corrupted_farm_update_is_detected_and_repaired) {
+  TamperedPair p;
+  p.hostGame.createFarm(8);
+  p.tamperer->corrupt = [](Message& m) {
+    auto* tiles = std::get_if<FarmTiles>(&m);
+    if (!tiles || tiles->tiles.empty()) return false;
+    tiles->tiles[0].cropId = 666;  // a weed the host never planted
+    return true;
+  };
+  p.run(1);
+  CHECK(p.guestGame.farmMirror() != p.hostGame.farm());  // the guest was fooled
+  p.run(6);  // two checks disagree, then a resync
+  CHECK(contains(p.guestLog, "Out of sync with the host; asking for a fresh copy"));
+  CHECK(p.guestGame.farmMirror() == p.hostGame.farm());
+}
+
+TEST(a_corrupted_spawn_is_detected_and_repaired) {
+  TamperedPair p;
+  uint32_t id = p.hostGame.spawnMonster(5, {30, 0, 30}, 10);
+  p.tamperer->corrupt = [](Message& m) {
+    auto* spawn = std::get_if<EntitySpawn>(&m);
+    if (!spawn) return false;
+    spawn->entity.kind = 99;  // the wrong species
+    return true;
+  };
+  p.run(1);
+  CHECK(p.guestGame.mirrored().at(id).kind == 99);
+  p.run(6);
+  CHECK(p.guestGame.mirrored().count(id) && p.guestGame.mirrored().at(id).kind == 5);
+}
+
+TEST(healthy_sessions_never_resync) {
+  Pair p({0.06, 0.04, 0.15, 0.05, 1234});
+  p.hostGame.createFarm(12);
+  for (int i = 0; i < 30; ++i) p.hostGame.spawnMonster(1, {static_cast<float>(i), 0, 40}, 10);
+  p.run(10);
+  // Churn while checks fly: farming and monsters coming and going.
+  for (uint8_t x = 0; x < 12; ++x) p.hostGame.farmAction({FarmAction::Till, SimGame::kFieldId, x, 0, 0});
+  for (uint32_t id = 100; id < 115; ++id) p.hostGame.removeEntity(id);
+  p.run(10);
+  CHECK(!contains(p.guestLog, "Out of sync with the host; asking for a fresh copy"));
+  CHECK(p.guestGame.farmMirror() == p.hostGame.farm());
+  CHECK(p.guestGame.mirrored().size() == 15);
+}
+
+// ------------------------------------------------------------------- storage
+
+namespace fs = std::filesystem;
+
+// A fresh, empty folder that removes itself.
+struct TempDir {
+  fs::path path;
+  TempDir() {
+    std::random_device rd;
+    path = fs::temp_directory_path() / ("rf4s-coop-test-" + std::to_string(rd()));
+    fs::create_directories(path);
+  }
+  ~TempDir() {
+    std::error_code ec;
+    fs::remove_all(path, ec);
+  }
+};
+
+GuestCharacter sampleCharacter() {
+  GuestCharacter c;
+  c.name = "Frey";
+  c.level = 42;
+  c.hp = 300;
+  c.maxHp = 350;
+  c.rp = 80;
+  c.maxRp = 120;
+  c.gold = 1234567890123ull;
+  c.items = {{100, 5}, {2005, 12}};
+  c.playSeconds = 98765;
+  return c;
+}
+
+void writeBytes(const fs::path& file, const std::vector<uint8_t>& bytes) {
+  std::ofstream out(file, std::ios::binary | std::ios::trunc);
+  out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+}
+
+TEST(crc32_matches_the_standard) {
+  const char* text = "123456789";
+  CHECK(crc32(reinterpret_cast<const uint8_t*>(text), 9) == 0xCBF43926u);
+}
+
+TEST(character_round_trips_and_rejects_damage) {
+  auto c = sampleCharacter();
+  auto bytes = serializeCharacter(c);
+  CHECK(parseCharacter(bytes) == c);
+
+  for (size_t i = 0; i < bytes.size(); i += 7) {  // any flipped byte is caught
+    auto damaged = bytes;
+    damaged[i] ^= 0x40;
+    CHECK(!parseCharacter(damaged));
+  }
+  auto truncated = bytes;
+  truncated.resize(bytes.size() - 5);
+  CHECK(!parseCharacter(truncated));
+  CHECK(!parseCharacter({}));
+}
+
+TEST(character_file_falls_back_to_its_backup) {
+  TempDir dir;
+  fs::path file = dir.path / "guest.bin";
+  std::string error;
+  CHECK(!loadCharacter(file, error) && !error.empty());
+
+  auto first = sampleCharacter();
+  CHECK(saveCharacter(file, first, error));
+  auto second = first;
+  second.level = 43;
+  CHECK(saveCharacter(file, second, error));
+  CHECK(loadCharacter(file, error) == second);
+  CHECK(!fs::exists(dir.path / "guest.bin.tmp"));
+
+  writeBytes(file, {1, 2, 3});  // the main file gets damaged
+  CHECK(loadCharacter(file, error) == first);
+}
+
+TEST(save_backups_copy_everything_and_keep_the_newest) {
+  TempDir dir;
+  fs::path saves = dir.path / "saves";
+  fs::create_directories(saves / "slot2");
+  writeBytes(saves / "slot1.sav", {1, 2, 3});
+  writeBytes(saves / "slot2" / "data.sav", {4, 5});
+  std::string error;
+
+  std::optional<fs::path> last;
+  for (int i = 1; i <= 7; ++i) {
+    last = backupSaves(saves, dir.path / "backups", "20261026-10000" + std::to_string(i), 5, error);
+    CHECK(last.has_value());
+  }
+  size_t kept = 0;
+  for (auto& e : fs::directory_iterator(dir.path / "backups")) kept += e.is_directory() ? 1 : 0;
+  CHECK(kept == 5);
+  CHECK(!fs::exists(dir.path / "backups" / "20261026-100001"));
+  CHECK(last && fs::file_size(*last / "slot1.sav") == 3 && fs::file_size(*last / "slot2" / "data.sav") == 2);
+
+  CHECK(!backupSaves(dir.path / "missing", dir.path / "backups", "x", 5, error));
 }
 
 }  // namespace

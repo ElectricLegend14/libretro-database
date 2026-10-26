@@ -2,6 +2,8 @@
 
 #include <cmath>
 #include <cstdint>
+#include <string>
+#include <vector>
 
 namespace coop {
 
@@ -102,6 +104,26 @@ struct FarmIntent {
 struct FarmOutcome {
   bool ok = false;
   uint16_t harvestedItem = 0;  // set by a successful Harvest
+};
+
+// The guest's own character while visiting someone else's world: kept in its
+// own file (storage.hpp), never in the game's save slots, so co-op can't
+// damage a save.
+struct GuestCharacter {
+  std::string name;
+  uint16_t level = 1;
+  uint32_t hp = 0, maxHp = 0;
+  uint32_t rp = 0, maxRp = 0;
+  uint64_t gold = 0;
+  struct Stack {
+    uint16_t itemId = 0;
+    uint16_t count = 0;
+    bool operator==(const Stack&) const = default;
+  };
+  std::vector<Stack> items;
+  uint32_t playSeconds = 0;
+
+  bool operator==(const GuestCharacter&) const = default;
 };
 
 }  // namespace coop

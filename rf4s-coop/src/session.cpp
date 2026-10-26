@@ -5,6 +5,7 @@
 #include <random>
 #include <set>
 
+#include "coop/checksum.hpp"
 #include "coop/connection.hpp"
 #include "coop/udp.hpp"
 
@@ -21,6 +22,10 @@ constexpr double kAttacksPerSec = 8;
 constexpr double kAttackBurst = 4;
 // The farm changes slowly; compare it a few times a second, not every tick.
 constexpr uint32_t kFarmEveryTicks = 5;
+// How often the host sends a WorldCheck, and how many disagreements in a row
+// make the guest ask for everything again. One can be a message in flight.
+constexpr double kWorldCheckSec = 2;
+constexpr int kMismatchesBeforeResync = 2;
 // Guest: how long fainted before waking up beside the host.
 constexpr double kFaintSec = 3;
 // After waking, bites the host settled against the old position are ignored.
@@ -153,6 +158,7 @@ class HostSession final : public Session, Peer {
       if (tick_ % clockEveryTicks() == 0) conn_->sendUnreliable(ClockSync{game_.readClock()});
       syncEntities();
       if (tick_ % kFarmEveryTicks == 0) syncFarm();
+      if (tick_ % checkEveryTicks() == 0) conn_->sendUnreliable(worldCheck());
     }
     for (auto& hurt : game_.drainHitsOnRemotePlayer()) conn_->sendReliable(PlayerHurt{hurt});
     drawPartner(now);
@@ -176,6 +182,10 @@ class HostSession final : public Session, Peer {
       onAttack(*attack, now);
     } else if (auto* pickup = std::get_if<PickupRequest>(&msg)) {
       onPickup(*pickup);
+    } else if (std::holds_alternative<ResyncRequest>(msg)) {
+      log(guestName_ + "'s copy of the world drifted; sending it again");
+      known_.clear();  // everything counts as new on the next tick
+      farmKnown_.clear();
     } else if (auto* farm = std::get_if<FarmRequest>(&msg)) {
       auto guest = remote_.latest();
       FarmOutcome outcome = guest ? game_.applyGuestFarmAction(farm->intent, *guest) : FarmOutcome{};
@@ -216,6 +226,15 @@ class HostSession final : public Session, Peer {
   }
 
   uint32_t clockEveryTicks() const { return std::max<uint32_t>(1, static_cast<uint32_t>(cfg_.tickRate)); }
+  uint32_t checkEveryTicks() const {
+    return std::max<uint32_t>(1, static_cast<uint32_t>(cfg_.tickRate * kWorldCheckSec));
+  }
+
+  WorldCheck worldCheck() const {
+    return {hashFarm(farmKnown_), static_cast<uint32_t>(farmKnown_.size()),
+            hashEntities(known_, [](const EntityState& e) -> const EntityState& { return e; }),
+            static_cast<uint32_t>(known_.size())};
+  }
 
   // Tells the guest which entities appeared, moved and went away since the
   // last tick. Spawns and despawns are reliable; movement is not.
@@ -418,7 +437,10 @@ class GuestSessionImpl final : public GuestSession, Peer {
     } else if (auto* pickup = std::get_if<PickupResult>(&msg)) {
       if (pickup->granted) game_.giveItem(pickup->itemId);
     } else if (auto* tiles = std::get_if<FarmTiles>(&msg)) {
+      for (auto& t : tiles->tiles) farm_[t.key()] = t;
       game_.applyFarmTiles(tiles->tiles);
+    } else if (auto* check = std::get_if<WorldCheck>(&msg)) {
+      onWorldCheck(*check);
     } else if (auto* farm = std::get_if<FarmResult>(&msg)) {
       onFarmResult(*farm);
     } else if (auto* chat = std::get_if<Chat>(&msg)) {
@@ -463,6 +485,31 @@ class GuestSessionImpl final : public GuestSession, Peer {
     }
   }
 
+  // Compares the host's fingerprint with our copy. Persistent disagreement
+  // means something was lost or misapplied: drop our copy and ask for it all.
+  void onWorldCheck(const WorldCheck& check) {
+    WorldCheck mine{hashFarm(farm_), static_cast<uint32_t>(farm_.size()),
+                    hashEntities(entities_, [](const Mirror& m) -> const EntityState& { return m.base; }),
+                    static_cast<uint32_t>(entities_.size())};
+    if (mine == check) {
+      mismatches_ = 0;
+      return;
+    }
+    if (++mismatches_ < kMismatchesBeforeResync) return;
+    mismatches_ = 0;
+    log("Out of sync with the host; asking for a fresh copy");
+    clearWorld();
+    conn_->sendReliable(ResyncRequest{});
+  }
+
+  void clearWorld() {
+    for (auto& [id, mirror] : entities_) {
+      if (mirror.shown) game_.removeRemoteEntity(id, false);
+    }
+    entities_.clear();
+    farm_.clear();
+  }
+
   // Items change hands only once the host agrees: a seed is used up when the
   // planting worked, a crop arrives when the harvest did.
   void onFarmResult(const FarmResult& result) {
@@ -488,10 +535,8 @@ class GuestSessionImpl final : public GuestSession, Peer {
   }
 
   void onDisconnected() override {
-    for (auto& [id, mirror] : entities_) {
-      if (mirror.shown) game_.removeRemoteEntity(id, false);
-    }
-    entities_.clear();
+    clearWorld();
+    mismatches_ = 0;
     pendingFarm_.clear();
     faintedAt_.reset();
     game_.setLocalWorldSuppressed(false);
@@ -526,6 +571,8 @@ class GuestSessionImpl final : public GuestSession, Peer {
   std::optional<double> apartSince_;
   std::map<uint32_t, Mirror> entities_;
   std::map<uint32_t, FarmIntent> pendingFarm_;  // by request ID
+  std::map<uint32_t, FarmTile> farm_;           // what the host has sent, by FarmTile::key
+  int mismatches_ = 0;
   uint32_t nextRequestId_ = 1;
   std::optional<double> faintedAt_;
   double graceUntil_ = 0;

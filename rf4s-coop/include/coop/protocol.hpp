@@ -22,6 +22,7 @@ enum class MsgType : uint8_t {
   AttackRequest = 0x11,
   PickupRequest = 0x12,
   FarmRequest = 0x13,
+  ResyncRequest = 0x14,
   EntitySpawn = 0x20,
   EntityUpdates = 0x21,
   EntityDespawn = 0x22,
@@ -31,6 +32,7 @@ enum class MsgType : uint8_t {
   FarmResult = 0x26,
   ClockSync = 0x31,
   FarmTiles = 0x32,
+  WorldCheck = 0x33,
   Chat = 0x40,
   Goodbye = 0xFF,
 };
@@ -92,6 +94,22 @@ struct FarmTiles {
   static constexpr MsgType kType = MsgType::FarmTiles;
   static constexpr size_t kMaxPerPacket = 120;
   std::vector<FarmTile> tiles;
+};
+
+// Host -> guest, unreliable, every 2 s: a fingerprint of everything the host
+// has told the guest about. See checksum.hpp.
+struct WorldCheck {
+  static constexpr MsgType kType = MsgType::WorldCheck;
+  uint32_t farmHash = 0;
+  uint32_t farmTiles = 0;
+  uint32_t entityHash = 0;
+  uint32_t entities = 0;
+  bool operator==(const WorldCheck&) const = default;
+};
+
+// Guest -> host, reliable: "my copy disagrees, send me everything again".
+struct ResyncRequest {
+  static constexpr MsgType kType = MsgType::ResyncRequest;
 };
 
 // Host -> guest, reliable: an entity came into range.
@@ -168,8 +186,9 @@ struct Goodbye {
 };
 
 using Message =
-    std::variant<Hello, Welcome, PlayerState, AttackRequest, PickupRequest, FarmRequest, EntitySpawn, EntityUpdates,
-                 EntityDespawn, HitResult, PlayerHurt, PickupResult, FarmResult, ClockSync, FarmTiles, Chat, Goodbye>;
+    std::variant<Hello, Welcome, PlayerState, AttackRequest, PickupRequest, FarmRequest, ResyncRequest, EntitySpawn,
+                 EntityUpdates, EntityDespawn, HitResult, PlayerHurt, PickupResult, FarmResult, ClockSync, FarmTiles,
+                 WorldCheck, Chat, Goodbye>;
 
 // A message on its own: type byte + payload.
 std::vector<uint8_t> encodeMessage(const Message& msg);

@@ -50,6 +50,10 @@ std::optional<ModConfig> parseConfig(const std::string& text, std::string& error
       if (!parseNumber(value, config.session.port) || config.session.port == 0) return bad();
     } else if (key == "host_address") {
       config.session.hostAddress = value;
+    } else if (key == "save_dir") {
+      config.saveDir = value;
+    } else if (key == "backup_keep") {
+      if (!parseNumber(value, config.backupKeep) || config.backupKeep > 100) return bad();
     } else if (key == "name") {
       if (value.empty()) return bad();
       config.session.playerName = value;

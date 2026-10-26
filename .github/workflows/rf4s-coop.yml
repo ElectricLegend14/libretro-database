@@ -1,0 +1,58 @@
+name: rf4s-coop
+
+on:
+  push:
+    paths: ["rf4s-coop/**", ".github/workflows/rf4s-coop.yml"]
+  pull_request:
+    paths: ["rf4s-coop/**", ".github/workflows/rf4s-coop.yml"]
+  workflow_dispatch:
+
+jobs:
+  linux:
+    name: Linux (ASan + UBSan)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: >
+          cmake -S rf4s-coop -B build -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=all"
+      - name: Build
+        run: cmake --build build -j
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+  windows:
+    name: Windows (MSVC)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S rf4s-coop -B build -A x64
+      - name: Build
+        run: cmake --build build --config Release
+      - name: Test
+        run: ctest --test-dir build -C Release --output-on-failure
+      - name: Upload the mod
+        uses: actions/upload-artifact@v4
+        with:
+          name: rf4s-coop-windows
+          path: |
+            build/Release/rf4s-coop.dll
+            build/Release/rf4s-coop-inject.exe
+            build/Release/sigscan.exe
+            build/Release/coop_sim.exe
+
+  mingw:
+    name: Windows (MinGW cross-compile)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install MinGW-w64
+        run: sudo apt-get update && sudo apt-get install -y g++-mingw-w64-x86-64
+      - name: Configure
+        run: >
+          cmake -S rf4s-coop -B build -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/rf4s-coop/cmake/mingw-w64-x86_64.cmake
+      - name: Build
+        run: cmake --build build -j

@@ -9,28 +9,53 @@ The design, phases and protocol are in the design doc:
 
 ## Status
 
-| Phase | What | State |
-| --- | --- | --- |
-| 0 · Groundwork | Loader, signature scanner, find player / map / clock in memory | Code done; **the game's signatures and offsets are still unknown** |
-| 1 · Ghost player | Two games see each other move | Networking and sync done and tested against a simulated game; drawing the partner in-world needs RE target 4 |
-| 2 · Companion | Guest fights, uses tools, follows between maps | Leash logic done; combat not started |
-| 3 · Full co-op | Farm sync, drop-in, guest save, Steam invites | Not started |
+The network and sync side of every phase is built and tested against a simulated game.
+What's missing is the game side: finding RF4S's data and functions in memory. Until
+`src/win/layout.hpp` is filled in, the mod loads into the game, logs what it can find
+and stays switched off. Nothing is written to game memory until then.
 
-So today the mod loads into the game, logs what it can find and stays switched off
-until `src/win/layout.hpp` is filled in. Nothing is written to game memory until then.
+| Phase | Sync and network (tested with `SimGame`) | Game side (needs reverse engineering) |
+| --- | --- | --- |
+| 0 · Groundwork | Loader, injector, signature scanner, config, save backups | Player, map and clock signatures |
+| 1 · Ghost player | Movement at 20 Hz with interpolation, clock sync, handshake, timeouts, rejoin | Drawing the partner in the world (RE target 4) |
+| 2 · Companion | Monsters, combat, damage to the guest, fainting, drops, map leash | Entity list, damage and spawn functions (RE targets 4, 5, 8) |
+| 3 · Full co-op | Farm sync, drop-in/drop-out, desync repair, guest character file | Farm tiles, inventory, character data |
+| 4 · Polish | | Steam invites (Steamworks), festivals, split-screen |
+
+## How it works
+
+- **Host-authoritative.** The host's game is the real world. The guest runs their own
+  copy of RF4S with its world stood down (`setLocalWorldSuppressed`) and shows the
+  host's monsters, drops and farm instead. Everything the guest does to the world
+  (attacks, pick-ups, farming) is a request the host checks and settles with the
+  game's own rules.
+- **Two channels over UDP.** State that's resent every tick anyway (positions, the
+  clock, monster movement) goes unreliably. Events (spawns, hits, pick-ups, farm
+  changes, chat) go over a reliable, ordered channel with acks and resends
+  (`connection.hpp`).
+- **Smoothing.** The partner and every monster are drawn 0.1 s in the past and
+  blended between snapshots, so 20 updates a second look fluid.
+- **Self-repair.** Every 2 s the host sends a fingerprint of what it has told the
+  guest. If the guest's copy disagrees twice in a row, it throws its copy away and
+  the host sends everything again.
+- **Save safety.** Saves are backed up before each session. The guest's character
+  is kept in its own file (`guest-character.bin`, atomic writes, CRC-checked, with a
+  `.bak`), never in the game's save slots.
 
 ## Layout
 
 ```
-include/coop/   portable core: protocol, UDP, sessions, signatures, config
-src/            core implementation + SimGame (a fake game for tests)
-src/win/        the mod DLL: game adapter, layout.hpp (signatures/offsets), DllMain
-tools/          coop_sim (try host/guest without the game), sigscan, injector
-tests/          unit and loopback session tests
+include/coop/   portable core: protocol, connection, sessions, interpolation,
+                checksums, storage, signatures, config, IGameAdapter
+src/            core implementation + SimGame (a fake game for tests and coop_sim)
+src/win/        the mod DLL: RF4S adapter, layout.hpp (signatures/offsets), DllMain
+tools/          coop_sim (host/guest without the game), sigscan, injector
+tests/          unit tests and full host/guest sessions over a simulated network
 ```
 
 The sync code only talks to the game through `IGameAdapter`, so it runs and is tested
-on any OS with `SimGame` standing in for RF4S.
+on any OS with `SimGame` standing in for RF4S. Each adapter method beyond the basics
+has a do-nothing default, so the real adapter can grow one found piece at a time.
 
 ## Build
 
@@ -58,8 +83,12 @@ On Windows, Visual Studio or MinGW work directly with the first command.
 ./build/coop_sim guest 127.0.0.1 7777      # in a second terminal
 ```
 
-Each side prints where it sees its partner. Stop one side to watch the other time
-out and then reconnect.
+Each side prints where it sees its partner. The host's world has three monsters near
+the guest's path: the guest swings at whatever is in reach, gets bitten, and picks up
+what drops. Stop one side to watch the other time out and then reconnect.
+
+The tests also run full sessions on a simulated network with lag, jitter, packet loss
+and duplicates (`ConditionedTransport`).
 
 ## Use it with the game (Windows)
 
@@ -75,6 +104,8 @@ role = host            # or guest
 port = 7777
 host_address = 1.2.3.4 # guest only
 name = Lest
+save_dir = C:\path\to\RF4S\saves   # backed up to save-backups\ before each session
+backup_keep = 5        # 0 turns backups off
 ```
 
 Both players need the same game version. The log prints its build ID, which the host
@@ -99,6 +130,13 @@ game's own process, so a wrong offset gives you wrong numbers in the log rather 
 
 ## Safety
 
-- Back up your save folder before trying the mod.
-- The guest's character will be stored in its own file, never in the game's save slots.
-- The mod refuses to start a session on a game build it doesn't recognise.
+- Back up your save folder yourself before trying the mod, and set `save_dir` so the
+  mod does it too before every session.
+- The guest's character is stored in its own file, never in the game's save slots.
+- The mod refuses to start a session when the two players' game builds differ.
+
+## CI
+
+`.github/workflows/rf4s-coop.yml` builds and tests on Linux (with AddressSanitizer
+and UndefinedBehaviorSanitizer) and on Windows with MSVC, cross-compiles with MinGW,
+and uploads the Windows DLL and tools as a build artifact.

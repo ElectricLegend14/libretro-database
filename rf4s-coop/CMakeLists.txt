@@ -20,7 +20,8 @@ add_library(coop_core STATIC
   src/session.cpp
   src/signature.cpp
   src/config.cpp
-  src/sim_game.cpp)
+  src/sim_game.cpp
+  src/storage.cpp)
 target_include_directories(coop_core PUBLIC include)
 if(WIN32)
   target_link_libraries(coop_core PUBLIC ws2_32)
