@@ -23,4 +23,8 @@ const std::vector<Character>& roster();
 // Returns the canonical name ("Edelgard", "#42").
 std::optional<std::string> resolveCharacter(std::string_view text);
 
+// Name the config uses for a game character id: the roster name once its
+// gameId is known, otherwise "#<id>".
+std::string characterNameForGameId(int id);
+
 }  // namespace coop

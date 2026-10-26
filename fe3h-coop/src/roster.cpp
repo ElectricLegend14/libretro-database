@@ -48,4 +48,10 @@ std::optional<std::string> resolveCharacter(std::string_view text) {
     return std::nullopt;
 }
 
+std::string characterNameForGameId(int id) {
+    for (const auto& c : roster())
+        if (c.gameId >= 0 && c.gameId == id) return c.name;
+    return "#" + std::to_string(id);
+}
+
 }  // namespace coop

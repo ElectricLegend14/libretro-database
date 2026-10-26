@@ -1,28 +1,14 @@
 #include "coop/settings.hpp"
 
-#include <algorithm>
-#include <cctype>
 #include <charconv>
 #include <map>
-#include <sstream>
 
+#include "coop/ini.hpp"
 #include "coop/roster.hpp"
 
 namespace coop {
 
 namespace {
-
-std::string_view trim(std::string_view s) {
-    while (!s.empty() && std::isspace(static_cast<unsigned char>(s.front()))) s.remove_prefix(1);
-    while (!s.empty() && std::isspace(static_cast<unsigned char>(s.back()))) s.remove_suffix(1);
-    return s;
-}
-
-std::string lower(std::string_view s) {
-    std::string out(s);
-    for (auto& c : out) c = char(std::tolower(static_cast<unsigned char>(c)));
-    return out;
-}
 
 bool parseInt(std::string_view s, int& out) {
     auto [ptr, ec] = std::from_chars(s.data(), s.data() + s.size(), out);
@@ -30,7 +16,7 @@ bool parseInt(std::string_view s, int& out) {
 }
 
 bool parseBool(std::string_view s, bool& out) {
-    auto v = lower(s);
+    auto v = toLower(s);
     if (v == "true" || v == "yes" || v == "on" || v == "1") return out = true, true;
     if (v == "false" || v == "no" || v == "off" || v == "0") return out = false, true;
     return false;
@@ -56,8 +42,6 @@ int playerSection(std::string_view section) {
     return parseInt(section.substr(prefix.size()), n) ? n : 0;
 }
 
-using Section = std::map<std::string, std::pair<std::string, int>>;  // key -> (value, line)
-
 }  // namespace
 
 Settings defaultSettings() {
@@ -74,42 +58,11 @@ LoadResult parseSettings(std::string_view text) {
         result.warnings.push_back("line " + std::to_string(line) + ": " + msg);
     };
 
-    // Pass 1: split into sections.
-    std::map<std::string, Section> sections;
-    std::string current;
-    int lineNo = 0;
-    while (!text.empty()) {
-        ++lineNo;
-        auto nl = text.find('\n');
-        auto line = trim(text.substr(0, nl));
-        text.remove_prefix(nl == std::string_view::npos ? text.size() : nl + 1);
+    IniFile ini = parseIni(text);
+    result.warnings = std::move(ini.warnings);
+    auto& sections = ini.sections;
 
-        if (line.empty() || line.front() == ';' || line.front() == '#') continue;
-        if (line.front() == '[') {
-            if (line.back() != ']') {
-                warn(lineNo, "malformed section header");
-                continue;
-            }
-            current = lower(trim(line.substr(1, line.size() - 2)));
-            sections[current];
-            continue;
-        }
-        auto eq = line.find('=');
-        if (eq == std::string_view::npos) {
-            warn(lineNo, "expected 'key = value'");
-            continue;
-        }
-        if (current.empty()) {
-            warn(lineNo, "option outside of any [section]");
-            continue;
-        }
-        auto value = trim(line.substr(eq + 1));
-        // Inline comments need whitespace before ';' so colors like #FF0000 survive.
-        if (auto c = value.find(" ;"); c != std::string_view::npos) value = trim(value.substr(0, c));
-        sections[current][lower(trim(line.substr(0, eq)))] = {std::string(value), lineNo};
-    }
-
-    // Pass 2: [coop] general options.
+    // [coop] general options.
     Settings& s = result.settings;
     int playerCount = kMinPlayers;
     for (const auto& [key, entry] : sections["coop"]) {
@@ -120,7 +73,7 @@ LoadResult parseSettings(std::string_view text) {
                                         std::to_string(kMinPlayers) + "-" + std::to_string(kMaxPlayers));
             }
         } else if (key == "unclaimed_units") {
-            auto v = lower(value);
+            auto v = toLower(value);
             if (v == "shared") s.unclaimed = UnclaimedPolicy::Shared;
             else if (v == "host") s.unclaimed = UnclaimedPolicy::Host;
             else if (v == "locked") s.unclaimed = UnclaimedPolicy::Locked;
@@ -138,7 +91,7 @@ LoadResult parseSettings(std::string_view text) {
         return result;
     }
 
-    // Pass 3: [playerN] sections.
+    // [playerN] sections.
     std::map<std::string, int> owner;  // character -> 1-based player who claimed it first
     for (int p = 1; p <= playerCount; ++p) {
         PlayerSettings player{"Player " + std::to_string(p), defaultColorFor(p), p - 1, {}};
@@ -180,7 +133,7 @@ LoadResult parseSettings(std::string_view text) {
         int p = playerSection(name);
         if (p > playerCount) {
             result.warnings.push_back("[" + name + "] ignored: players = " + std::to_string(playerCount));
-        } else if (p == 0 && name != "coop" && !name.empty()) {
+        } else if (p == 0 && name != "coop") {
             result.warnings.push_back("unknown section [" + name + "]");
         }
     }
@@ -198,27 +151,29 @@ LoadResult parseSettings(std::string_view text) {
 }
 
 std::string serializeSettings(const Settings& s) {
-    std::ostringstream out;
     const char* policy = s.unclaimed == UnclaimedPolicy::Host     ? "host"
                          : s.unclaimed == UnclaimedPolicy::Locked ? "locked"
                                                                   : "shared";
-    out << "[coop]\n"
-        << "players = " << s.players.size() << "\n"
-        << "unclaimed_units = " << policy << "\n"
-        << "in_game_claiming = " << (s.allowInGameClaiming ? "true" : "false") << "\n"
-        << "tint_unit_outlines = " << (s.tintUnitOutlines ? "true" : "false") << "\n";
+    auto boolText = [](bool b) { return b ? "true" : "false"; };
+
+    std::string out;
+    out += "[coop]\n";
+    out += "players = " + std::to_string(s.players.size()) + "\n";
+    out += std::string("unclaimed_units = ") + policy + "\n";
+    out += std::string("in_game_claiming = ") + boolText(s.allowInGameClaiming) + "\n";
+    out += std::string("tint_unit_outlines = ") + boolText(s.tintUnitOutlines) + "\n";
 
     for (size_t i = 0; i < s.players.size(); ++i) {
         const auto& p = s.players[i];
-        out << "\n[player" << i + 1 << "]\n"
-            << "name = " << p.name << "\n"
-            << "color = " << p.color.toHex() << "\n"
-            << "controller = " << p.controller + 1 << "\n"
-            << "characters = ";
-        for (size_t c = 0; c < p.characters.size(); ++c) out << (c ? ", " : "") << p.characters[c];
-        out << "\n";
+        out += "\n[player" + std::to_string(i + 1) + "]\n";
+        out += "name = " + p.name + "\n";
+        out += "color = " + p.color.toHex() + "\n";
+        out += "controller = " + std::to_string(p.controller + 1) + "\n";
+        out += "characters = ";
+        for (size_t c = 0; c < p.characters.size(); ++c) out += (c ? ", " : "") + p.characters[c];
+        out += "\n";
     }
-    return out.str();
+    return out;
 }
 
 }  // namespace coop
