@@ -53,4 +53,15 @@ return {
 
   -- Show which host buttons are being pressed, to help set up p2_keys.
   show_host_input = false,
+
+  -- Party stats, already known from this repository's cheat codes
+  -- (cht/Nintendo - Nintendo DS/Avatar The Last Airbender (U).cht).
+  -- Co-op doesn't use them yet; probe.lua shows them so you can check that
+  -- the scripts are reading the game's memory correctly.
+  party = {
+    { name = "Aang", hp = { addr = 0x021C7798, size = 2 }, max_hp = { addr = 0x021C7794, size = 2 } },
+    { name = "Sokka", hp = { addr = 0x021C77B4, size = 2 }, max_hp = { addr = 0x021C77B0, size = 2 } },
+    { name = "Katara", hp = { addr = 0x021C77D0, size = 2 }, max_hp = { addr = 0x021C77CC, size = 2 } },
+    { name = "Haru", hp = { addr = 0x021C77EC, size = 2 }, max_hp = { addr = 0x021C77E8, size = 2 } },
+  },
 }

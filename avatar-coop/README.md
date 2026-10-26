@@ -1,27 +1,28 @@
 # Avatar: The Last Airbender (DS) co-op
 
 A two-player co-op mod for *Avatar: The Last Airbender* (Nintendo DS, 2006,
-USA, serial `AVAE`). It's a Lua script for the BizHawk emulator. Player 1
-plays normally, and Player 2 takes over a party member with a second gamepad
-or their own keyboard keys.
+USA, serial `AVAE`). It's a Lua script for the BizHawk emulator.
 
-The game itself is unchanged. The script reads Player 2's input every frame
-and moves their character by writing to the game's memory.
+In this game all four heroes (Aang, Sokka, Katara and Haru) fight on screen
+together. You control one, and the computer controls the other three. This
+mod lets Player 2 take over one of the computer-controlled heroes with a
+second gamepad or their own keyboard keys. The game itself is unchanged: each
+frame, the script moves Player 2's hero by writing to the game's memory.
 
-> **Status: framework ready, addresses not found yet.** The script is written
-> and tested, but it still needs the memory locations of the characters in this
-> game. Until those are filled in, it shows "Co-op: setup needed" and leaves
-> the game alone. Finding them takes about an hour with BizHawk's RAM Search
-> (see below).
+> **Status: tools ready, addresses not found yet.** Everything is written and
+> tested against a simulated game, but the scripts still need the memory
+> locations of the heroes' positions. `finder.lua` finds them for you in a few
+> minutes (see "Setup" below). Until they're filled in, `coop.lua` shows
+> "Co-op: setup needed" and leaves the game alone.
 
 ## What you need
 
 - **BizHawk 2.9 or newer** (Windows or Linux): <https://tasvideos.org/BizHawk>.
   It runs DS games with the melonDS core.
-- **Your own dump of the game.** The USA version this targets is:
-  `Avatar - The Last Airbender (USA).nds`, SHA-1
+- **Your own dump of the game.** The USA version this targets is
+  `Avatar - The Last Airbender (USA).nds`, with SHA-1
   `B5BDC88489AD74399E2ED968D816669E594A5F74`.
-  The script warns you if a different version is loaded.
+  `coop.lua` warns you if a different version is loaded.
 - **A DS BIOS and firmware** set up in BizHawk, if your version asks for them.
 
 ## Files
@@ -30,15 +31,70 @@ and moves their character by writing to the game's memory.
 | --- | --- |
 | `coop.lua` | The mod. Run this to play. |
 | `config.lua` | Memory addresses, Player 2's buttons, speed and leash. Most of your editing happens here. |
-| `probe.lua` | Shows each configured address's live value on screen, so you can check them. |
+| `finder.lua` | Finds the position addresses automatically. |
+| `probe.lua` | Shows live values on screen, so you can check the addresses. |
 | `memory.lua` | Helpers the other scripts share. |
+
+To run any script, open **Tools > Lua Console** in BizHawk, then
+**Script > Open Script**. Stop one script before starting another.
+
+## Setup (once)
+
+### 1. Check that memory reading works
+
+Load the game, get into normal play, and run `probe.lua`. The top lines show
+each hero's health, which comes from this repository's known cheat codes.
+
+- If the numbers look right (for example `Aang HP: 120 / 120`) and drop when
+  you take damage, everything is working.
+- If they're `0 / 0` or nonsense, you probably have a different version of the
+  game. Tell Claude what you see.
+
+### 2. Find the positions automatically
+
+1. Get into a level and stand somewhere **open**, away from walls and enemies.
+   The script needs to walk a few steps in every direction.
+2. Run `finder.lua` and press **T**. Don't touch the controls. It walks your
+   hero left, right, up and down by itself, three times each, which takes
+   about 20 seconds.
+3. It lists the candidates it found and saves them to `finder-results.txt`.
+   Expect a handful: your hero, the heroes following you, and some copies
+   (camera, graphics).
+4. Press **N** to test each candidate. The game rewinds to where the search
+   started and moves that value a few steps:
+   - If a **hero jumps** to a new spot, it's a real position. Press **M** to
+     mark it, and write down **which hero** jumped.
+   - If **nothing visible happens**, or only the camera shifts, it's a copy.
+     Skip it.
+   - **B** goes back to the previous candidate.
+5. Send Claude the contents of `finder-results.txt` and which hero jumped for
+   each marked line. Claude will fill in `config.lua`.
+
+If you'd like to fill it in yourself: an `x` match goes in `x`, a `depth` match
+goes in `y`, and Player 1's hero goes under `p1`. Pick one hero for Player 2
+and use theirs under `p2`.
+
+### 3. If the addresses stop working after a level change
+
+The game may keep the heroes in memory that moves between levels. Run the
+finder again in the new level and send Claude both results files. Claude can
+work out the pattern (a "pointer") so the addresses work everywhere.
+
+### Finding addresses by hand (fallback)
+
+If the finder can't find anything, use **Tools > RAM Search** with the domain
+set to **Main RAM** and 4-byte signed values. Walk right, then search
+**greater than** the previous value. Walk left, then search **less than**.
+Stand still, then search **equal to**. Repeat until only a few are left, and
+poke-test them in **RAM Watch**.
 
 ## Playing
 
-1. Load the game in BizHawk.
-2. Open **Tools > Lua Console**, then **Script > Open Script**, and choose `coop.lua`.
-3. Player 1 uses the normal DS controls. Player 2 uses **I J K L** to move by
+1. Load the game and run `coop.lua`.
+2. Player 1 uses the normal DS controls. Player 2 uses **I J K L** to move by
    default, or the D-pad on a second Xbox-style controller.
+3. **Player 1 shouldn't switch to Player 2's hero** on the touch screen,
+   or you'll both be steering the same hero.
 
 BizHawk gives the DS only one controller port, so Player 2's buttons are read
 straight from your PC's keyboard and gamepads. To use a different controller,
@@ -49,68 +105,26 @@ of the buttons you press; copy them into `p2_keys`.
 [Parsec](https://parsec.app). Their controller then works as a second local
 gamepad.
 
-## Finding the addresses
-
-You only need to do this once per game version. Use **Tools > RAM Search**
-with the memory domain set to **Main RAM**. Characters' positions in DS games
-are usually **4-byte signed** values.
-
-### 1. Player 1's position (do this first, it's the easiest)
-
-1. Stand still, then click **Reset** in RAM Search.
-2. Walk right a little. Search for values **greater than** the previous value.
-3. Walk left. Search for values **less than** the previous value.
-4. Stand still. Search for values **equal to** the previous value.
-5. Repeat until only a few addresses are left. Add them to **RAM Watch** and
-   check that the value changes when you walk left or right.
-6. Use the address as `p1.x` in `config.lua`. The vertical axis (`p1.y`) is
-   usually 4 or 8 bytes after it; test it by walking up and down.
-
-### 2. Player 2's character
-
-Do the same search, but watch a party member that follows you. They move when
-you move, so search in short steps while they are walking.
-
-To confirm you have the right address, **poke** a new value into it in RAM
-Watch. The character should jump to a new spot.
-
-### 3. Addresses that move around
-
-If an address stops working after a level change or reload, the game is
-keeping that character in memory that moves. Find the new address after
-reloading, then search RAM for a 4-byte value close to it (the start of the
-character's data, usually a little before the position). The address that
-holds that value is the pointer. Write it in `config.lua` like this, where
-`offset` is the position's distance from the start of the data:
-
-```lua
-x = { ptr = 0x020F1000, offset = 0x30 },
-```
-
-### 4. Check, then play
-
-Run `probe.lua`. Each value should change only when it should. Then run
-`coop.lua`. If Player 2 moves too fast or too slow, change `p2.speed`.
+If Player 2 moves too fast or too slow, change `p2.speed` in `config.lua`.
 
 ## Extras once the basics work
 
-- **Facing direction:** find the byte that changes when the companion turns,
+- **Facing direction:** find the value that changes when Player 2's hero turns,
   and set `p2.facing` and `p2.facing_values`.
-- **Attacks and bending:** find a value that changes when the companion
-  attacks (often an "action state"). Add it to `actions` with a button.
-  While that button is held, its value is written every frame.
-- **Leash:** Player 2 is kept within `leash` of Player 1, so the game's
-  camera doesn't lose them. Set it to `nil` to turn this off.
+- **Attacks and bending:** find a value that changes when that hero attacks
+  (often an "action state"). Add it to `actions` with a button. While that
+  button is held, its value is written every frame.
+- **Leash:** Player 2 is kept within `leash` of Player 1, so the game's camera
+  doesn't lose them. Set it to `nil` to turn this off.
+- **Three or four players:** since all four heroes are on screen, the same
+  approach could work for up to four players.
 
 ## Known limits
 
-- This is still untested in the real game. It doesn't yet know whether the
-  game keeps party members on screen alongside the active character. If it
-  only shows one character at a time, Player 2 needs a different approach,
-  such as taking turns on the active character. That gets decided once the
-  addresses are found.
-- The game's own AI also moves the companion. The script overrides it on any
-  frame where Player 2 presses a direction. When Player 2 lets go, the AI
-  takes over again.
-- It only works in BizHawk, not on a real DS. Real hardware would need a
-  ROM hack, which is much bigger.
+- These scripts are tested against a simulated game, not the real one yet.
+- The game's own AI also moves Player 2's hero. The script overrides it on any
+  frame where Player 2 presses a direction. When Player 2 lets go, the AI takes
+  over again, which works as an "autopilot".
+- Player 2 can move but can't attack until an action address is found.
+- It only works in BizHawk, not on a real DS. Real hardware would need a ROM
+  hack, which is much bigger.

@@ -27,9 +27,22 @@ local function describe(entry)
   return string.format("%d  @ %08X", mem.read(entry), 0x02000000 + offset)
 end
 
+-- Health comes from the cheat codes, so it should always read correctly. If
+-- these numbers look wrong, memory reading itself isn't working.
+local function party_line(member)
+  local hp, max_hp = mem.read(member.hp), mem.read(member.max_hp)
+  return string.format("%s HP: %s / %s", member.name, tostring(hp), tostring(max_hp))
+end
+
 while true do
-  for i, w in ipairs(watches) do
-    gui.text(2, 2 + (i - 1) * 14, w[1] .. ": " .. describe(w[2]))
+  local y = 2
+  for _, member in ipairs(cfg.party) do
+    gui.text(2, y, party_line(member))
+    y = y + 14
+  end
+  for _, w in ipairs(watches) do
+    gui.text(2, y, w[1] .. ": " .. describe(w[2]))
+    y = y + 14
   end
   emu.frameadvance()
 end
