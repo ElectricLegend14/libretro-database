@@ -41,6 +41,7 @@ jobs:
             build/Release/rf4s-coop.dll
             build/Release/rf4s-coop-inject.exe
             build/Release/sigscan.exe
+            build/Release/layoutcheck.exe
             build/Release/coop_sim.exe
 
   mingw:

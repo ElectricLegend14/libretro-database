@@ -49,7 +49,7 @@ include/coop/   portable core: protocol, connection, sessions, interpolation,
                 checksums, storage, signatures, config, IGameAdapter
 src/            core implementation + SimGame (a fake game for tests and coop_sim)
 src/win/        the mod DLL: RF4S adapter, frame hook (MinHook + thunk), default layout, DllMain
-tools/          coop_sim (host/guest without the game), sigscan, injector
+tools/          coop_sim (host/guest without the game), sigscan, layoutcheck, injector
 tests/          unit tests and full host/guest sessions over a simulated network
 ```
 
@@ -126,7 +126,9 @@ in the design doc's reverse-engineering plan:
 2. Copy enough bytes around that instruction to make a pattern, with `??` over the
    displacement.
 3. Check it: `sigscan "<game>.exe" "48 8B 05 ?? ?? ?? ?? ..."` must say *Unique match*.
-4. Add it to `rf4s-layout.ini` and inject. The log shows whether it resolved, and once
+4. Add it to `rf4s-layout.ini`. `layoutcheck "<game>.exe" rf4s-layout.ini` checks every
+   entry against the executable on disk (no game running): each signature must match
+   once, and the address it resolves to must land inside the executable. Then inject. The log shows whether it resolved, and once
    the player is found it logs the live position every second (phase 0's gate).
 5. To find offsets inside the player object, set `dump_player_bytes = 256`: the log
    gets a hex dump every 2 s. Walk, take damage or spend RP between dumps and look

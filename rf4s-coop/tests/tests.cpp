@@ -15,6 +15,7 @@
 #include "coop/config.hpp"
 #include "coop/connection.hpp"
 #include "coop/layout.hpp"
+#include "coop/pe.hpp"
 #include "coop/protocol.hpp"
 #include "coop/session.hpp"
 #include "coop/signature.hpp"
@@ -1295,6 +1296,71 @@ TEST(a_guest_who_faints_as_the_link_drops_still_gets_up) {
   a.run(1);
   auto self = a.guestGame.readLocalPlayer();
   CHECK(self.hp == self.maxHp / 4);
+}
+
+// ---------------------------------------------------------------- layoutcheck
+
+// A minimal x64 executable: .text at RVA 0x1000 (file 0x200) holding
+// `mov rax, [rip+disp]` pointing into .data at RVA 0x2000 (file 0x400).
+std::vector<uint8_t> tinyExe() {
+  std::vector<uint8_t> f(0x600, 0);
+  auto put16 = [&](size_t at, uint16_t v) { std::memcpy(&f[at], &v, 2); };
+  auto put32 = [&](size_t at, uint32_t v) { std::memcpy(&f[at], &v, 4); };
+  put16(0, 0x5A4D);       // MZ
+  put32(0x3C, 0x40);      // e_lfanew
+  put32(0x40, 0x4550);    // PE\0\0
+  put16(0x44, 0x8664);    // x64
+  put16(0x46, 2);         // sections
+  put32(0x48, 0x5EED1234);  // timestamp
+  put16(0x54, 0xF0);      // optional header size
+  put16(0x58, 0x20B);     // PE32+
+  size_t table = 0x58 + 0xF0;
+  auto section = [&](size_t at, const char* name, uint32_t rva, uint32_t raw, uint32_t flags) {
+    std::memcpy(&f[at], name, std::strlen(name));
+    put32(at + 8, 0x200);  // virtual size
+    put32(at + 12, rva);
+    put32(at + 16, 0x200);  // raw size
+    put32(at + 20, raw);
+    put32(at + 36, flags);
+  };
+  section(table, ".text", 0x1000, 0x200, 0x60000020);  // code, execute, read
+  section(table + 40, ".data", 0x2000, 0x400, 0xC0000040);
+  // At .text+0x10 (RVA 0x1010): CC CC 48 8B 05 <disp> ; target 0x2040.
+  const uint8_t code[] = {0xCC, 0xCC, 0x48, 0x8B, 0x05};
+  std::memcpy(&f[0x210], code, sizeof code);
+  put32(0x215, 0x2040 - (0x1012 + 7));
+  return f;
+}
+
+TEST(layoutcheck_reads_an_executable_from_disk) {
+  auto file = tinyExe();
+  std::string error;
+  auto pe = parsePe(file, error);
+  CHECK(pe && pe->timestamp == 0x5EED1234 && pe->sections.size() == 2);
+  if (!pe) return;
+  CHECK(pe->codeSection() && pe->codeSection()->name == ".text");
+
+  GameLayout layout;
+  CHECK(applyLayoutOverrides("player.signature = CC CC 48 8B 05 ?? ?? ?? ??\n"
+                             "player.disp_offset = 5\n"
+                             "player.instr_length = 9\n"
+                             "frame.signature = 48 8B 05\n"
+                             "frame.offset = -2\n",
+                             layout, error));
+  auto checks = checkLayout(*pe, file, layout);
+  CHECK(checks.size() == 4);
+  CHECK(checks[0].name == "player" && checks[0].ok() && checks[0].matchRva == 0x1010 &&
+        checks[0].targetRva == 0x2040 && checks[0].targetSection == ".data");
+  CHECK(!checks[1].hasSignature && checks[1].ok());  // map: none given
+  CHECK(checks[3].ok() && checks[3].targetRva == 0x1010 && checks[3].targetSection == ".text");
+
+  layout.mapId.signature = "00 00";  // matches all over the place
+  CHECK(!checkLayout(*pe, file, layout)[1].ok());
+
+  auto notExe = file;
+  notExe[0] = 'X';
+  CHECK(!parsePe(notExe, error));
+  CHECK(!parsePe(std::vector<uint8_t>(file.begin(), file.begin() + 0x100), error));
 }
 
 }  // namespace

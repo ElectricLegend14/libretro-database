@@ -22,6 +22,7 @@ add_library(coop_core STATIC
   src/signature.cpp
   src/config.cpp
   src/layout.cpp
+  src/pe.cpp
   src/sim_game.cpp
   src/storage.cpp)
 target_include_directories(coop_core PUBLIC include)
@@ -34,6 +35,9 @@ target_link_libraries(coop_sim PRIVATE coop_core)
 
 add_executable(sigscan tools/sigscan.cpp)
 target_link_libraries(sigscan PRIVATE coop_core)
+
+add_executable(layoutcheck tools/layoutcheck.cpp)
+target_link_libraries(layoutcheck PRIVATE coop_core)
 
 enable_testing()
 add_executable(coop_tests tests/tests.cpp)
@@ -77,6 +81,7 @@ if(WIN32)
     target_link_options(rf4s-coop-inject PRIVATE -static)
     target_link_options(coop_sim PRIVATE -static)
     target_link_options(sigscan PRIVATE -static)
+    target_link_options(layoutcheck PRIVATE -static)
     target_link_options(coop_tests PRIVATE -static)
   endif()
 endif()
