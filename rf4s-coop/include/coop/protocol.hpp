@@ -19,6 +19,14 @@ enum class MsgType : uint8_t {
   Hello = 0x01,
   Welcome = 0x02,
   PlayerState = 0x10,
+  AttackRequest = 0x11,
+  PickupRequest = 0x12,
+  EntitySpawn = 0x20,
+  EntityUpdates = 0x21,
+  EntityDespawn = 0x22,
+  HitResult = 0x23,
+  PlayerHurt = 0x24,
+  PickupResult = 0x25,
   ClockSync = 0x31,
   Chat = 0x40,
   Goodbye = 0xFF,
@@ -49,6 +57,75 @@ struct PlayerState {
   PlayerSnapshot body;
 };
 
+// Guest -> host, reliable.
+struct AttackRequest {
+  static constexpr MsgType kType = MsgType::AttackRequest;
+  uint32_t requestId = 0;
+  AttackIntent intent;
+};
+
+// Guest -> host, reliable. First claim on a drop wins.
+struct PickupRequest {
+  static constexpr MsgType kType = MsgType::PickupRequest;
+  uint32_t entityId = 0;
+};
+
+// Host -> guest, reliable: an entity came into range.
+struct EntitySpawn {
+  static constexpr MsgType kType = MsgType::EntitySpawn;
+  uint32_t tick = 0;
+  EntityState entity;
+};
+
+// The fields that change every tick.
+struct EntityDelta {
+  uint32_t id = 0;
+  Vec3 pos;
+  float facing = 0;
+  uint16_t anim = 0;
+  uint32_t hp = 0;
+};
+
+// Host -> guest, unreliable, every tick. Updates for entities the guest hasn't
+// been told about yet are ignored.
+struct EntityUpdates {
+  static constexpr MsgType kType = MsgType::EntityUpdates;
+  static constexpr size_t kMaxPerPacket = 40;  // keeps the datagram under ~1100 bytes
+  uint32_t tick = 0;
+  std::vector<EntityDelta> entities;
+};
+
+enum class DespawnReason : uint8_t { Gone = 0, Killed = 1, PickedUp = 2 };
+
+// Host -> guest, reliable.
+struct EntityDespawn {
+  static constexpr MsgType kType = MsgType::EntityDespawn;
+  uint32_t id = 0;
+  DespawnReason reason = DespawnReason::Gone;
+};
+
+// Host -> guest, reliable: what the guest's attack did. Empty `hits` = a miss.
+struct HitResult {
+  static constexpr MsgType kType = MsgType::HitResult;
+  static constexpr size_t kMaxHits = 32;
+  uint32_t requestId = 0;
+  std::vector<Hit> hits;
+};
+
+// Host -> guest, reliable.
+struct PlayerHurt {
+  static constexpr MsgType kType = MsgType::PlayerHurt;
+  HurtEvent hurt;
+};
+
+// Host -> guest, reliable.
+struct PickupResult {
+  static constexpr MsgType kType = MsgType::PickupResult;
+  uint32_t entityId = 0;
+  bool granted = false;
+  uint16_t itemId = 0;
+};
+
 struct ClockSync {
   static constexpr MsgType kType = MsgType::ClockSync;
   GameClock clock;
@@ -66,7 +143,8 @@ struct Goodbye {
   GoodbyeReason reason = GoodbyeReason::Quit;
 };
 
-using Message = std::variant<Hello, Welcome, PlayerState, ClockSync, Chat, Goodbye>;
+using Message = std::variant<Hello, Welcome, PlayerState, AttackRequest, PickupRequest, EntitySpawn, EntityUpdates,
+                             EntityDespawn, HitResult, PlayerHurt, PickupResult, ClockSync, Chat, Goodbye>;
 
 // A message on its own: type byte + payload.
 std::vector<uint8_t> encodeMessage(const Message& msg);

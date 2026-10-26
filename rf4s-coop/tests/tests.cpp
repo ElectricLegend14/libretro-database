@@ -53,10 +53,6 @@ std::optional<T> roundTrip(const T& msg) {
   return std::get<T>(*decoded);
 }
 
-float distance(const Vec3& a, const Vec3& b) {
-  return std::sqrt((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y) + (a.z - b.z) * (a.z - b.z));
-}
-
 // A perfect in-memory network: datagrams arrive instantly and in order.
 // Wrap ports in ConditionedTransport to make it worse.
 class MemoryNet {
@@ -516,6 +512,202 @@ TEST(leaving_and_timeouts_drop_the_partner) {
   CHECK(!q.guest->connected() && !q.guestGame.remote() && !q.guest->failed());
   q.run(2);  // host comes back; guest rejoins
   CHECK(q.guest->connected() && q.host->connected());
+}
+
+// ------------------------------------------------------------------ phase 2
+
+TEST(protocol_round_trips_phase2_messages) {
+  EntityState e;
+  e.id = 77;
+  e.category = EntityCategory::Drop;
+  e.kind = 1003;
+  e.mapId = 4;
+  e.pos = {1, 2, 3};
+  e.hp = 5;
+  e.maxHp = 9;
+  auto spawn = roundTrip(EntitySpawn{12, e});
+  CHECK(spawn && spawn->tick == 12 && spawn->entity.id == 77 && spawn->entity.category == EntityCategory::Drop &&
+        spawn->entity.kind == 1003 && spawn->entity.pos.z == 3 && spawn->entity.maxHp == 9);
+
+  EntityUpdates updates{9, {{1, {1, 1, 1}, 0.5f, 2, 30}, {2, {2, 2, 2}, -0.5f, 3, 0}}};
+  auto u = roundTrip(updates);
+  CHECK(u && u->tick == 9 && u->entities.size() == 2 && u->entities[1].id == 2 && u->entities[1].facing == -0.5f);
+
+  auto attack = roundTrip(AttackRequest{5, {AttackKind::Spell, 300, {4, 5, 6}, 1.f, 77}});
+  CHECK(attack && attack->requestId == 5 && attack->intent.kind == AttackKind::Spell &&
+        attack->intent.itemId == 300 && attack->intent.targetHint == 77);
+
+  auto hits = roundTrip(HitResult{5, {{77, 15, 0, true}, {78, 15, 10, false}}});
+  CHECK(hits && hits->hits.size() == 2 && hits->hits[0].killed && !hits->hits[1].killed && hits->hits[1].hpAfter == 10);
+
+  auto hurt = roundTrip(PlayerHurt{{77, 8, {0, 0, 1}}});
+  CHECK(hurt && hurt->hurt.damage == 8 && hurt->hurt.knockback.z == 1);
+
+  auto pickup = roundTrip(PickupResult{77, true, 1003});
+  CHECK(pickup && pickup->granted && pickup->itemId == 1003);
+  CHECK(roundTrip(PickupRequest{77})->entityId == 77);
+  CHECK(roundTrip(EntityDespawn{77, DespawnReason::Killed})->reason == DespawnReason::Killed);
+
+  // Batches are capped, and a bad enum is refused.
+  EntityUpdates big{1, std::vector<EntityDelta>(100)};
+  CHECK(roundTrip(big)->entities.size() == EntityUpdates::kMaxPerPacket);
+  auto bytes = encodeMessage(EntityDespawn{1, DespawnReason::Gone});
+  bytes.back() = 9;
+  CHECK(!decodeMessage(bytes.data(), bytes.size()));
+}
+
+// A host and a guest standing still near each other, ready for a fight.
+struct Arena : Pair {
+  Vec3 guestSpot;
+
+  Arena() {
+    guestGame.setWalking(false);
+    guestSpot = guestGame.readLocalPlayer().pos;  // (3, 0, 0)
+  }
+  // Settles things after an action: a round trip plus a few ticks.
+  void settle() { run(0.5); }
+};
+
+TEST(monsters_appear_on_the_guest_and_follow_the_host) {
+  Arena a;
+  std::vector<uint32_t> ids;
+  for (int i = 0; i < 3; ++i) ids.push_back(a.hostGame.spawnMonster(7, {20.f + i * 3, 0, 20}, 50));
+  a.run(3);
+  CHECK(a.guestGame.suppressed());
+  CHECK(a.guestGame.mirrored().size() == 3);
+  for (auto id : ids) {
+    auto it = a.guestGame.mirrored().find(id);
+    CHECK(it != a.guestGame.mirrored().end() && it->second.kind == 7 && it->second.maxHp == 50 &&
+          distance(it->second.pos, a.hostGame.world().at(id).pos) < 0.3f);
+  }
+
+  // The host walks to another map: its monsters go away on the guest too.
+  a.hostGame.warpLocalPlayer(2, {});
+  a.run(1);
+  CHECK(a.guestGame.mirrored().empty());
+}
+
+TEST(entity_updates_are_split_across_packets) {
+  Arena a;
+  for (int i = 0; i < 100; ++i) a.hostGame.spawnMonster(1, {static_cast<float>(i), 0, 50}, 10);
+  a.run(2);
+  CHECK(a.guestGame.mirrored().size() == 100);
+}
+
+TEST(guest_kills_a_monster_and_picks_up_the_drop) {
+  Arena a;
+  uint32_t monster = a.hostGame.spawnMonster(3, {a.guestSpot.x + 1, 0, 0}, 25);
+  a.run(2);
+  for (int i = 0; i < 3; ++i) {
+    a.guestGame.queueAttack({AttackKind::Melee, 1, a.guestSpot, 0, 0});
+    a.settle();
+  }
+  // 10 + 10 + 5: the third swing kills it.
+  const auto& shown = a.guestGame.hitsShown();
+  CHECK(shown.size() == 3 && shown[2].size() == 1 && shown[2][0].killed && shown[2][0].damage == 5);
+  CHECK(a.guestGame.killedSeen() == std::vector<uint32_t>{monster});
+  CHECK(!a.hostGame.world().count(monster));
+
+  // It left a drop, which the guest sees and picks up.
+  uint32_t drop = 0;
+  for (auto& [id, e] : a.guestGame.mirrored()) {
+    if (e.category == EntityCategory::Drop) drop = id;
+  }
+  CHECK(drop != 0 && a.guestGame.mirrored().at(drop).kind == SimGame::kDropItemBase + 3);
+  a.guestGame.queuePickup(drop);
+  a.settle();
+  CHECK(a.guestGame.inventory() == std::vector<uint16_t>{SimGame::kDropItemBase + 3});
+  CHECK(!a.hostGame.world().count(drop) && !a.guestGame.mirrored().count(drop));
+}
+
+TEST(host_wins_a_race_for_a_drop) {
+  Arena a;
+  uint32_t drop = a.hostGame.spawnDrop(55, a.guestSpot);
+  uint32_t farDrop = a.hostGame.spawnDrop(56, {40, 0, 40});
+  a.run(1);
+  a.hostGame.removeEntity(drop);  // the host grabs it first
+  a.guestGame.queuePickup(drop);
+  a.guestGame.queuePickup(farDrop);  // out of reach
+  a.settle();
+  CHECK(a.guestGame.inventory().empty());
+  CHECK(a.hostGame.world().count(farDrop));
+}
+
+TEST(guest_attacks_are_rate_limited) {
+  Arena a;
+  a.hostGame.spawnMonster(1, {a.guestSpot.x + 1, 0, 0}, 1000);
+  a.run(1);
+  for (int i = 0; i < 20; ++i) a.guestGame.queueAttack({AttackKind::Melee, 1, a.guestSpot, 0, 0});
+  a.settle();
+  int landed = 0;
+  for (auto& hits : a.guestGame.hitsShown()) landed += hits.empty() ? 0 : 1;
+  CHECK(a.guestGame.hitsShown().size() == 20);  // every request gets an answer
+  CHECK(landed >= 4 && landed <= 6);             // the burst, plus what refills in the meantime
+}
+
+TEST(attack_from_a_spoofed_position_is_pulled_back) {
+  Arena a;
+  a.hostGame.spawnMonster(1, {50, 0, 50}, 100);
+  a.run(1);
+  a.guestGame.queueAttack({AttackKind::Melee, 1, {50, 0, 50}, 0, 0});  // claims to be beside it
+  a.settle();
+  CHECK(a.guestGame.hitsShown().size() == 1 && a.guestGame.hitsShown()[0].empty());
+}
+
+TEST(guest_faints_and_wakes_beside_the_host) {
+  Arena a;
+  a.hostGame.setWalking(false);
+  a.guestGame.setHp(10);
+  a.hostGame.spawnMonster(4, a.guestSpot, 100);  // right on top of the guest
+  a.run(3);
+  CHECK(contains(a.guestLog, "Fainted! Waking up beside the host soon"));
+  CHECK(a.guestGame.readLocalPlayer().hp == 0);
+
+  a.guestGame.queueAttack({AttackKind::Melee, 1, a.guestSpot, 0, 0});  // can't swing while down
+  a.run(3);
+  CHECK(contains(a.guestLog, "Woke up beside the host"));
+  auto self = a.guestGame.readLocalPlayer();
+  CHECK(self.hp == self.maxHp / 4);
+  CHECK(distance(self.pos, a.hostGame.readLocalPlayer().pos) < 0.5f);
+  for (auto& hits : a.guestGame.hitsShown()) CHECK(hits.empty());
+}
+
+TEST(late_bites_miss_a_guest_who_just_woke_up) {
+  Arena a;
+  a.hostGame.setWalking(false);
+  a.guestGame.setHp(10);
+  // Two monsters on the guest: bites keep coming while the guest is down,
+  // and some are still in flight when they wake.
+  a.hostGame.spawnMonster(4, a.guestSpot, 100);
+  a.hostGame.spawnMonster(4, a.guestSpot, 100);
+  a.run(8);
+  CHECK(contains(a.guestLog, "Woke up beside the host"));
+  CHECK(a.guestGame.readLocalPlayer().hp == a.guestGame.readLocalPlayer().maxHp / 4);
+}
+
+TEST(disconnect_hands_the_world_back_to_the_guest) {
+  Arena a;
+  a.hostGame.spawnMonster(1, {30, 0, 30}, 10);
+  a.run(2);
+  CHECK(a.guestGame.suppressed() && a.guestGame.mirrored().size() == 1);
+  a.host->leave();
+  a.run(0.5);
+  CHECK(!a.guestGame.suppressed() && a.guestGame.mirrored().empty());
+}
+
+TEST(combat_works_on_a_bad_network) {
+  Pair p({0.06, 0.04, 0.15, 0.05, 99});
+  p.guestGame.setWalking(false);
+  Vec3 spot = p.guestGame.readLocalPlayer().pos;
+  uint32_t monster = p.hostGame.spawnMonster(2, {spot.x + 1, 0, 0}, 40);
+  p.run(3);
+  for (int i = 0; i < 4; ++i) {
+    p.guestGame.queueAttack({AttackKind::Melee, 1, spot, 0, 0});
+    p.run(1);
+  }
+  p.run(2);
+  CHECK(!p.hostGame.world().count(monster));
+  CHECK(p.guestGame.killedSeen() == std::vector<uint32_t>{monster});
 }
 
 }  // namespace

@@ -1,12 +1,12 @@
 #pragma once
 
-#include <deque>
 #include <functional>
 #include <memory>
 #include <optional>
 #include <string>
 
 #include "coop/game_adapter.hpp"
+#include "coop/interpolation.hpp"
 #include "coop/protocol.hpp"
 #include "coop/transport.hpp"
 
@@ -26,22 +26,11 @@ struct SessionConfig {
   std::function<void(const std::string&)> log;
 };
 
-// Smooths the partner's movement by drawing them slightly in the past and
-// blending between the two snapshots around that moment.
-class RemotePlayer {
+// The partner, smoothed. See Interpolated.
+class RemotePlayer : public Interpolated<PlayerSnapshot> {
  public:
-  RemotePlayer(double tickRate, double delayTicks) : tickRate_(tickRate), delayTicks_(delayTicks) {}
-
-  void onState(const PlayerState& state, double now);
-  std::optional<PlayerSnapshot> view(double now) const;
-  std::optional<PlayerSnapshot> sample(double tick) const;
-  void reset() { states_.clear(); }
-
- private:
-  double tickRate_;
-  double delayTicks_;
-  double latestAt_ = 0;
-  std::deque<PlayerState> states_;  // sorted by tick
+  using Interpolated::Interpolated;
+  void onState(const PlayerState& state, double now) { push(state.tick, state.body, now); }
 };
 
 class Session {
