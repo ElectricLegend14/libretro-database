@@ -1,0 +1,472 @@
+<title>Three Houses Co-op Roster</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700&family=Alegreya+Sans:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: a war-council table. Players sit in a row of seats up top, the
+   roster is the map below, and the finished orders (coop.ini) sit at the end. */
+:root {
+  --bg: #eceef2;
+  --surface: #f8f9fb;
+  --ink: #1b2230;
+  --muted: #5b6475;
+  --line: #d3d8e1;
+  --gilt: #94701f;
+  --gilt-soft: #efe4c8;
+  --warn: #9a5a00;
+  --warn-bg: #fbeed6;
+  --font-display: "Cinzel", "Trajan Pro", Georgia, serif;
+  --font-body: "Alegreya Sans", "Gill Sans", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  --radius: 6px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #11151d; --surface: #191e29; --ink: #e6e9ef; --muted: #98a1b3;
+    --line: #2c3342; --gilt: #d6b264; --gilt-soft: #2f2a1c;
+    --warn: #f0b85a; --warn-bg: #33270f; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #11151d; --surface: #191e29; --ink: #e6e9ef; --muted: #98a1b3;
+  --line: #2c3342; --gilt: #d6b264; --gilt-soft: #2f2a1c;
+  --warn: #f0b85a; --warn-bg: #33270f; color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink);
+  font-family: var(--font-body); font-size: 16px; line-height: 1.5;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 28px 48px;
+}
+.wrap { max-width: 1080px; margin: 0 auto; display: grid; gap: 36px; }
+
+header { display: grid; gap: 6px; }
+.eyebrow { font-size: 13px; letter-spacing: .14em; text-transform: uppercase; color: var(--gilt); font-weight: 700; }
+h1 { font-family: var(--font-display); font-weight: 700; font-size: clamp(28px, 5vw, 40px); line-height: 1.15; margin: 0; text-wrap: balance; }
+h2 { font-family: var(--font-display); font-weight: 500; font-size: 22px; margin: 0; text-wrap: balance; }
+.lede { color: var(--muted); max-width: 62ch; margin: 0; }
+
+section { display: grid; gap: 14px; }
+.section-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 16px; border-bottom: 1px solid var(--line); padding-bottom: 8px; }
+
+button, select, input { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 2px solid var(--gilt); outline-offset: 2px; }
+
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+.seg button { background: var(--surface); border: 0; padding: 6px 14px; font-weight: 500; }
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button[aria-pressed="true"] { background: var(--ink); color: var(--bg); }
+
+/* Seats */
+.seats { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 14px; }
+.seat {
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 14px; display: grid; gap: 12px; position: relative; min-width: 0;
+  border-top: 4px solid var(--pc);
+}
+.seat.active { box-shadow: 0 0 0 2px var(--pc); }
+.seat-top { display: flex; align-items: center; gap: 10px; }
+.seat-num { font-family: var(--font-display); font-weight: 700; color: var(--pc); font-size: 14px; letter-spacing: .08em; white-space: nowrap; }
+.seat input[type="text"] { flex: 1; min-width: 0; background: var(--bg); border: 1px solid var(--line); border-radius: 4px; padding: 5px 8px; }
+.swatches { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.swatch { width: 26px; height: 26px; border-radius: 50%; border: 2px solid var(--surface); box-shadow: 0 0 0 1px var(--line); padding: 0; }
+.swatch[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--ink); }
+.custom-color { width: 30px; height: 28px; border: 1px solid var(--line); border-radius: 4px; padding: 1px; background: var(--bg); }
+.row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; font-size: 14px; color: var(--muted); }
+.row select { background: var(--bg); border: 1px solid var(--line); border-radius: 4px; padding: 3px 6px; color: var(--ink); }
+.pick-btn { justify-self: start; border: 1px solid var(--pc); background: transparent; border-radius: 999px; padding: 4px 14px; font-weight: 700; font-size: 14px; }
+.seat.active .pick-btn { background: var(--pc); color: #fff; }
+.count { font-variant-numeric: tabular-nums; }
+
+/* Roster */
+.picking { font-size: 15px; display: flex; align-items: center; gap: 8px; }
+.dot { width: 12px; height: 12px; border-radius: 50%; background: var(--pc); display: inline-block; flex: none; }
+.houses { display: grid; gap: 22px; }
+.house-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; margin-bottom: 8px; }
+.house-name { font-family: var(--font-display); font-size: 15px; letter-spacing: .1em; text-transform: uppercase; display: flex; align-items: center; gap: 8px; }
+.house-name .crest { width: 4px; height: 18px; background: var(--house); border-radius: 2px; }
+.link-btn { background: none; border: 0; color: var(--gilt); font-weight: 700; font-size: 14px; padding: 2px 0; }
+.chars { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
+.char {
+  display: flex; align-items: center; gap: 10px; text-align: left;
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 7px 10px; min-width: 0; transition: border-color .12s, background .12s;
+}
+.char:hover { border-color: var(--muted); }
+.char.owned { border-color: var(--oc); background: color-mix(in srgb, var(--oc) 12%, var(--surface)); }
+.mono {
+  width: 30px; height: 30px; border-radius: 50%; flex: none;
+  display: grid; place-items: center; font-family: var(--font-display); font-weight: 700; font-size: 14px;
+  background: var(--bg); color: var(--muted); border: 1px solid var(--line);
+}
+.char.owned .mono { background: var(--oc); color: #fff; border-color: var(--oc); }
+.char-text { display: grid; min-width: 0; line-height: 1.2; }
+.char-name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.char-owner { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Rules + output */
+.two-col { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr); gap: 28px; align-items: start; }
+@media (max-width: 760px) { .two-col { grid-template-columns: minmax(0, 1fr); } }
+.rules { display: grid; gap: 14px; }
+.rule { display: grid; gap: 4px; }
+.rule label, .rule .label { font-weight: 700; }
+.rule p { margin: 0; color: var(--muted); font-size: 14px; }
+.check { display: flex; gap: 10px; align-items: flex-start; }
+.check input { margin-top: 5px; accent-color: var(--gilt); }
+.notes { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.notes li { background: var(--warn-bg); color: var(--warn); border-radius: 4px; padding: 6px 10px; font-size: 14px; }
+.notes li.info { background: var(--gilt-soft); color: var(--ink); }
+
+.output { display: grid; gap: 10px; min-width: 0; }
+.out-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.btn { border: 1px solid var(--ink); background: var(--ink); color: var(--bg); border-radius: var(--radius); padding: 7px 16px; font-weight: 700; }
+.btn.ghost { background: transparent; color: var(--ink); border-color: var(--line); }
+.file-label { position: relative; overflow: hidden; display: inline-block; }
+.file-label input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+pre {
+  margin: 0; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 14px 16px; overflow-x: auto; font-family: var(--font-mono); font-size: 13px; line-height: 1.6;
+  max-height: 520px; overflow-y: auto;
+}
+pre .sec { color: var(--gilt); font-weight: 500; }
+pre .key { color: var(--muted); }
+.path { font-family: var(--font-mono); font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
+.status { font-size: 14px; color: var(--muted); min-height: 1.5em; }
+
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Fire Emblem: Three Houses · Co-op mod</div>
+    <h1>Divide the army</h1>
+    <p class="lede">Pick a seat, choose your color, then click the students you'll command. The settings file at the bottom updates as you go. Copy it into <span class="path">sdmc:/config/fe3h-coop/coop.ini</span>.</p>
+  </header>
+
+  <section aria-labelledby="seats-h">
+    <div class="section-head">
+      <h2 id="seats-h">Players</h2>
+      <div class="seg" role="group" aria-label="Number of players" id="count-seg"></div>
+    </div>
+    <div class="seats" id="seats"></div>
+  </section>
+
+  <section aria-labelledby="roster-h">
+    <div class="section-head">
+      <h2 id="roster-h">Roster</h2>
+      <div class="picking" id="picking"></div>
+    </div>
+    <div class="houses" id="houses"></div>
+  </section>
+
+  <section aria-labelledby="out-h">
+    <div class="section-head"><h2 id="out-h">Rules and settings file</h2></div>
+    <div class="two-col">
+      <div class="rules">
+        <div class="rule">
+          <label for="unclaimed">Units nobody claimed</label>
+          <select id="unclaimed" class="row">
+            <option value="shared">Anyone can move them</option>
+            <option value="host">Only player 1 can move them</option>
+            <option value="locked">Nobody can move them</option>
+          </select>
+        </div>
+        <div class="rule check">
+          <input type="checkbox" id="claiming">
+          <div><label for="claiming">Claim units during battle prep</label><p>Press ZR on a unit in the prep screen to claim or release it. Changes are saved to the file.</p></div>
+        </div>
+        <div class="rule check">
+          <input type="checkbox" id="tint">
+          <div><label for="tint">Color unit outlines by owner</label><p>Each unit on the map gets a ring in its player's color.</p></div>
+        </div>
+        <ul class="notes" id="notes" aria-live="polite"></ul>
+      </div>
+      <div class="output">
+        <div class="out-actions">
+          <button class="btn" id="copy">Copy coop.ini</button>
+          <span class="btn ghost file-label">Load a coop.ini<input type="file" id="load" accept=".ini,.txt,text/plain" aria-label="Load a coop.ini file"></span>
+          <button class="btn ghost" id="clear">Release everyone</button>
+        </div>
+        <div class="status" id="status" role="status"></div>
+        <pre id="ini" tabindex="0" aria-label="Generated coop.ini"></pre>
+      </div>
+    </div>
+  </section>
+</div>
+
+<script>
+// Keep in sync with src/roster.cpp and src/color.cpp.
+const HOUSES = [
+  { name: "Professor", color: "#94701f", chars: ["Byleth"] },
+  { name: "Black Eagles", color: "#b91c1c", chars: ["Edelgard", "Hubert", "Ferdinand", "Linhardt", "Caspar", "Bernadetta", "Dorothea", "Petra"] },
+  { name: "Blue Lions", color: "#1d4ed8", chars: ["Dimitri", "Dedue", "Felix", "Ashe", "Sylvain", "Mercedes", "Annette", "Ingrid"] },
+  { name: "Golden Deer", color: "#ca8a04", chars: ["Claude", "Lorenz", "Raphael", "Ignatz", "Lysithea", "Marianne", "Hilda", "Leonie"] },
+  { name: "Church and staff", color: "#64748b", chars: ["Seteth", "Flayn", "Hanneman", "Manuela", "Gilbert", "Alois", "Catherine", "Shamir", "Cyril", "Jeritza", "Rhea", "Anna"] },
+  { name: "Ashen Wolves", color: "#6b7280", chars: ["Yuri", "Balthus", "Constance", "Hapi"] },
+];
+const PRESETS = {
+  blue: "#3B82F6", red: "#EF4444", green: "#22C55E", yellow: "#EAB308", purple: "#A855F7",
+  orange: "#F97316", pink: "#EC4899", cyan: "#06B6D4", white: "#F5F5F5",
+  eagle: "#B91C1C", lion: "#1D4ED8", deer: "#CA8A04",
+};
+const SWATCHES = ["blue", "red", "green", "yellow", "purple", "orange", "pink", "cyan", "eagle", "lion", "deer"];
+const DEFAULT_ORDER = ["blue", "red", "green", "yellow"];
+const ALL_NAMES = HOUSES.flatMap(h => h.chars);
+const STORE_KEY = "fe3h-coop-picker";
+
+const defaultPlayer = i => ({ name: `Player ${i + 1}`, color: PRESETS[DEFAULT_ORDER[i]], controller: i + 1 });
+
+// Example state: the sample config shipped with the mod.
+let state = {
+  count: 2, active: 0,
+  unclaimed: "shared", claiming: true, tint: true,
+  players: [0, 1, 2, 3].map(defaultPlayer),
+  owner: { Byleth: 0, Edelgard: 0, Hubert: 0, Dorothea: 0, Petra: 1, Caspar: 1, Bernadetta: 1, Linhardt: 1 },
+};
+
+try {
+  const saved = JSON.parse(localStorage.getItem(STORE_KEY));
+  if (saved && saved.players && saved.owner) state = { ...state, ...saved };
+} catch (_) {}
+
+function save() {
+  try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch (_) {}
+}
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+function hexToRgb(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+// Same "redmean" distance and threshold as colorDistance() in the mod.
+function colorDistance(a, b) {
+  const [r1, g1, b1] = hexToRgb(a), [r2, g2, b2] = hexToRgb(b);
+  const rm = (r1 + r2) / 2, dr = r1 - r2, dg = g1 - g2, db = b1 - b2;
+  return Math.sqrt((2 + rm / 256) * dr * dr + 4 * dg * dg + (2 + (255 - rm) / 256) * db * db);
+}
+const MIN_DISTANCE = 80;
+
+function charsOf(p) { return ALL_NAMES.filter(n => state.owner[n] === p); }
+
+function setStatus(msg) { $("status").textContent = msg; }
+
+function renderCount() {
+  $("count-seg").innerHTML = [2, 3, 4].map(n =>
+    `<button type="button" data-count="${n}" aria-pressed="${state.count === n}">${n} players</button>`).join("");
+}
+
+function renderSeats() {
+  $("seats").innerHTML = state.players.slice(0, state.count).map((p, i) => {
+    const swatches = SWATCHES.map(s =>
+      `<button type="button" class="swatch" data-p="${i}" data-color="${PRESETS[s]}" style="background:${PRESETS[s]}"
+        aria-label="${s}" title="${s}" aria-pressed="${p.color.toUpperCase() === PRESETS[s]}"></button>`).join("");
+    const ctrl = [1, 2, 3, 4, 5, 6, 7, 8].map(c => `<option value="${c}" ${c === p.controller ? "selected" : ""}>Controller ${c}</option>`).join("");
+    const n = charsOf(i).length;
+    return `<div class="seat ${state.active === i ? "active" : ""}" style="--pc:${p.color}">
+      <div class="seat-top">
+        <span class="seat-num">P${i + 1}</span>
+        <input type="text" id="name-${i}" data-p="${i}" value="${esc(p.name)}" maxlength="24" aria-label="Player ${i + 1} name">
+      </div>
+      <div class="swatches">${swatches}
+        <input type="color" class="custom-color" id="color-${i}" data-p="${i}" value="${p.color.toLowerCase()}" aria-label="Custom color for player ${i + 1}" title="Custom color">
+      </div>
+      <div class="row">
+        <select id="ctrl-${i}" data-p="${i}" aria-label="Player ${i + 1} controller">${ctrl}</select>
+        <span class="count">${n} unit${n === 1 ? "" : "s"}</span>
+      </div>
+      <button type="button" class="pick-btn" data-pick="${i}">${state.active === i ? "Picking now" : "Pick units"}</button>
+    </div>`;
+  }).join("");
+}
+
+function renderRoster() {
+  const ap = state.players[state.active];
+  $("picking").innerHTML = `<span class="dot" style="--pc:${ap.color}"></span> Clicking gives units to <strong>${esc(ap.name)}</strong>`;
+  $("houses").innerHTML = HOUSES.map((h, hi) => `
+    <div class="house">
+      <div class="house-head">
+        <div class="house-name" style="--house:${h.color}"><span class="crest"></span>${h.name}</div>
+        ${h.chars.length > 1 ? `<button type="button" class="link-btn" data-house="${hi}">Give all to ${esc(ap.name)}</button>` : ""}
+      </div>
+      <div class="chars">${h.chars.map(c => {
+        const o = state.owner[c];
+        const owned = o !== undefined && o < state.count;
+        const op = owned ? state.players[o] : null;
+        return `<button type="button" class="char ${owned ? "owned" : ""}" data-char="${c}" ${owned ? `style="--oc:${op.color}"` : ""}
+          aria-pressed="${owned}" aria-label="${c}${owned ? `, commanded by ${esc(op.name)}` : ", unclaimed"}">
+          <span class="mono">${c[0]}</span>
+          <span class="char-text"><span class="char-name">${c}</span><span class="char-owner">${owned ? esc(op.name) : "Unclaimed"}</span></span>
+        </button>`;
+      }).join("")}</div>
+    </div>`).join("");
+}
+
+function renderRules() {
+  $("unclaimed").value = state.unclaimed;
+  $("claiming").checked = state.claiming;
+  $("tint").checked = state.tint;
+
+  const notes = [];
+  const ps = state.players.slice(0, state.count);
+  for (let a = 0; a < ps.length; a++)
+    for (let b = a + 1; b < ps.length; b++)
+      if (colorDistance(ps[a].color, ps[b].color) < MIN_DISTANCE)
+        notes.push(["warn", `${ps[a].name} and ${ps[b].name} have very similar colors. Pick something easier to tell apart.`]);
+  ps.forEach((p, i) => {
+    if (!charsOf(i).length && !state.claiming)
+      notes.push(["warn", `${p.name} has no units, and claiming during battle prep is off.`]);
+  });
+  const byCtrl = {};
+  ps.forEach(p => (byCtrl[p.controller] ||= []).push(p.name));
+  Object.entries(byCtrl).forEach(([c, names]) => {
+    if (names.length > 1) notes.push(["info", `${names.join(" and ")} share controller ${c}, so you'll pass it around on each turn.`]);
+  });
+  $("notes").innerHTML = notes.map(([k, t]) => `<li class="${k}">${esc(t)}</li>`).join("");
+}
+
+// Same layout as serializeSettings() in the mod, so files round-trip cleanly.
+function buildIni() {
+  const lines = ["[coop]", `players = ${state.count}`, `unclaimed_units = ${state.unclaimed}`,
+    `in_game_claiming = ${state.claiming}`, `tint_unit_outlines = ${state.tint}`];
+  state.players.slice(0, state.count).forEach((p, i) => {
+    lines.push("", `[player${i + 1}]`, `name = ${p.name.trim() || `Player ${i + 1}`}`,
+      `color = ${p.color.toUpperCase()}`, `controller = ${p.controller}`, `characters = ${charsOf(i).join(", ")}`);
+  });
+  return lines.join("\n") + "\n";
+}
+
+function renderIni() {
+  $("ini").innerHTML = esc(buildIni()).split("\n").map(l =>
+    l.startsWith("[") ? `<span class="sec">${l}</span>` :
+    l.includes(" = ") ? `<span class="key">${l.slice(0, l.indexOf(" = "))}</span>${l.slice(l.indexOf(" = "))}` : l).join("\n");
+}
+
+function render() { renderCount(); renderSeats(); renderRoster(); renderRules(); renderIni(); save(); }
+
+function parseIni(text) {
+  const sections = {};
+  let cur = null;
+  for (let raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line[0] === ";" || line[0] === "#") continue;
+    if (line[0] === "[" && line.endsWith("]")) { cur = line.slice(1, -1).trim().toLowerCase(); sections[cur] ||= {}; continue; }
+    const eq = line.indexOf("=");
+    if (eq < 0 || !cur) continue;
+    let v = line.slice(eq + 1).trim();
+    const c = v.indexOf(" ;"); if (c >= 0) v = v.slice(0, c).trim();
+    sections[cur][line.slice(0, eq).trim().toLowerCase()] = v;
+  }
+  const g = sections.coop || {};
+  const count = Math.min(4, Math.max(2, parseInt(g.players, 10) || 2));
+  const bool = (v, d) => v === undefined ? d : /^(true|yes|on|1)$/i.test(v);
+  const next = {
+    ...state, count, active: 0,
+    unclaimed: ["shared", "host", "locked"].includes((g.unclaimed_units || "").toLowerCase()) ? g.unclaimed_units.toLowerCase() : "shared",
+    claiming: bool(g.in_game_claiming, true), tint: bool(g.tint_unit_outlines, true),
+    players: [0, 1, 2, 3].map(defaultPlayer), owner: {},
+  };
+  const skipped = [];
+  for (let i = 0; i < count; i++) {
+    const s = sections[`player${i + 1}`] || {};
+    const p = next.players[i];
+    if (s.name) p.name = s.name;
+    if (s.color) {
+      const v = s.color.toLowerCase();
+      if (PRESETS[v]) p.color = PRESETS[v];
+      else if (/^#?[0-9a-f]{6}$/.test(v)) p.color = "#" + v.replace("#", "").toUpperCase();
+    }
+    const ctrl = parseInt(s.controller, 10); if (ctrl >= 1 && ctrl <= 8) p.controller = ctrl;
+    (s.characters || "").split(",").map(x => x.trim()).filter(Boolean).forEach(x => {
+      const name = ALL_NAMES.find(n => n.toLowerCase() === x.toLowerCase());
+      if (!name) skipped.push(x);
+      else if (next.owner[name] === undefined) next.owner[name] = i;
+    });
+  }
+  return { next, skipped };
+}
+
+document.addEventListener("click", e => {
+  const t = e.target.closest("button");
+  if (!t) return;
+  if (t.dataset.count) {
+    state.count = +t.dataset.count;
+    if (state.active >= state.count) state.active = 0;
+    render();
+  } else if (t.dataset.pick !== undefined) {
+    state.active = +t.dataset.pick; render();
+  } else if (t.dataset.color) {
+    state.players[+t.dataset.p].color = t.dataset.color; render();
+  } else if (t.dataset.char) {
+    const c = t.dataset.char, o = state.owner[c], a = state.active;
+    if (o === a) { delete state.owner[c]; setStatus(`${c} is unclaimed now.`); }
+    else {
+      state.owner[c] = a;
+      setStatus(o !== undefined && o < state.count
+        ? `${c} moved from ${state.players[o].name} to ${state.players[a].name}.`
+        : `${c} joins ${state.players[a].name}.`);
+    }
+    render();
+    document.querySelector(`[data-char="${c}"]`)?.focus();
+  } else if (t.dataset.house !== undefined) {
+    HOUSES[+t.dataset.house].chars.forEach(c => state.owner[c] = state.active);
+    setStatus(`${HOUSES[+t.dataset.house].name} now follow ${state.players[state.active].name}.`);
+    render();
+  } else if (t.id === "clear") {
+    state.owner = {}; setStatus("Everyone is unclaimed."); render();
+  } else if (t.id === "copy") {
+    const text = buildIni();
+    const fallback = () => {
+      const r = document.createRange(); r.selectNodeContents($("ini"));
+      const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+      setStatus("Text selected. Press Ctrl+C (or ⌘C) to copy.");
+    };
+    try {
+      navigator.clipboard.writeText(text).then(() => setStatus("Copied. Paste it into coop.ini."), fallback);
+    } catch (_) { fallback(); }
+  }
+});
+
+document.addEventListener("input", e => {
+  const t = e.target, p = t.dataset.p;
+  if (t.type === "text" && p !== undefined) {
+    state.players[+p].name = t.value;
+    renderRoster(); renderRules(); renderIni(); save();
+  } else if (t.type === "color" && p !== undefined) {
+    state.players[+p].color = t.value.toUpperCase();
+    // Repaint without rebuilding the seats so the native picker stays open.
+    t.closest(".seat").style.setProperty("--pc", t.value);
+    renderRoster(); renderRules(); renderIni(); save();
+  }
+});
+
+document.addEventListener("change", e => {
+  const t = e.target;
+  if (t.id === "unclaimed") state.unclaimed = t.value;
+  else if (t.id === "claiming") state.claiming = t.checked;
+  else if (t.id === "tint") state.tint = t.checked;
+  else if (t.type === "color") state.players[+t.dataset.p].color = t.value.toUpperCase();
+  else if (t.id && t.id.startsWith("ctrl-")) state.players[+t.dataset.p].controller = +t.value;
+  else if (t.id === "load" && t.files[0]) {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const { next, skipped } = parseIni(String(reader.result));
+      state = next;
+      setStatus(skipped.length ? `Loaded. Skipped names not in the roster: ${skipped.join(", ")}.` : "Loaded your coop.ini.");
+      render();
+    };
+    reader.readAsText(t.files[0]);
+    t.value = "";
+    return;
+  } else return;
+  render();
+});
+
+render();
+</script>

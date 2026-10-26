@@ -42,6 +42,10 @@ controller presses ZR on a unit to claim it. Pressing ZR again releases it.
 You can't take a unit another player already owns. Claims are written back
 to `coop.ini`.
 
+**Picker page:** open `tools/picker.html` in a browser to choose colors,
+controllers and units by clicking, then copy the finished `coop.ini`. It can
+also load an existing `coop.ini` so you can edit it.
+
 Mistakes in the file never crash the game. Unknown names or colors are skipped
 with a warning. An invalid player count falls back to the defaults.
 
@@ -52,6 +56,7 @@ with a warning. An invalid player count falls back to the defaults.
 | `include/coop/`, `src/*.cpp` | Platform-independent core: config parsing, roster, ownership and turn rules |
 | `src/switch/hooks.cpp` | exlaunch glue for the game (hook offsets still **TODO**) |
 | `tests/` | Desktop tests for the core |
+| `tools/picker.html` | Click-to-pick page that writes `coop.ini` |
 
 ## Building and testing the core
 
