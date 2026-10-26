@@ -615,7 +615,11 @@ class GuestSessionImpl final : public GuestSession, Peer {
     clearWorld();
     mismatches_ = 0;
     pendingFarm_.clear();
-    faintedAt_.reset();
+    if (faintedAt_) {  // don't leave the guest lying there with no host to wake beside
+      faintedAt_.reset();
+      auto self = game_.readLocalPlayer();
+      game_.reviveLocalPlayer(self.mapId, self.pos, std::max<uint32_t>(1, self.maxHp / 4));
+    }
     game_.setLocalWorldSuppressed(false);
   }
 

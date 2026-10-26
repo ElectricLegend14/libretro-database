@@ -1284,6 +1284,19 @@ TEST(a_late_copy_of_an_old_hello_doesnt_reset_the_session) {
   CHECK(contains(p.hostLog, "Guest: still here"));
 }
 
+TEST(a_guest_who_faints_as_the_link_drops_still_gets_up) {
+  Arena a;
+  a.hostGame.setWalking(false);
+  a.guestGame.setHp(10);
+  a.hostGame.spawnMonster(4, a.guestSpot, 100);
+  a.run(2.5);
+  CHECK(a.guestGame.readLocalPlayer().hp == 0);
+  a.host->leave();  // before the 3 s wake-up
+  a.run(1);
+  auto self = a.guestGame.readLocalPlayer();
+  CHECK(self.hp == self.maxHp / 4);
+}
+
 }  // namespace
 
 int main() {
