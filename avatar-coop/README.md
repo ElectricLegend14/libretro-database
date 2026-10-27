@@ -34,7 +34,7 @@ moves Player 2's hero by writing to the game's memory.
 | `config.lua` | Hero addresses, Player 2's keys, speed and leash. Most of your editing happens here. |
 | `finder.lua` | Finds hero positions and button values automatically. |
 | `probe.lua` | Shows live values on screen, so you can check the addresses. |
-| `experiment.lua` | Tries out values from the label search (keys 1-6, 0 rewinds), to learn what they do. |
+| `experiment.lua` | Tests "tag-in" attacks: briefly switches control to another hero to press a button (keys 1-6, 9 picks the switch, 0 rewinds). |
 | `memory.lua` | Helpers the other scripts share. |
 
 To run any script, open **Tools > Lua Console** in BizHawk, then

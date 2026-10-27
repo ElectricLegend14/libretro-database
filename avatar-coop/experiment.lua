@@ -9,61 +9,59 @@
 local here = debug.getinfo(1, "S").source:match("^@(.*[/\\])") or ""
 local mem = dofile(here .. "memory.lua")
 
-local function byte(addr)
-  return { addr = addr, size = 1 }
+-- Which hero the player controls: 0 with Aang, 1 with Sokka. Changing
+-- either of these switches control (found with the label search, confirmed
+-- in the game). Key 9 picks which one the experiments use.
+local SWITCHES = { { addr = 0x021D3E24, size = 1 }, { addr = 0x021C7725, size = 1 } }
+local ACTIVE = SWITCHES[1]
+
+-- DS buttons by the names BizHawk gives them (possibly with "P1 ").
+local BUTTONS = { "Up", "Down", "Left", "Right", "A", "B", "X", "Y", "L", "R", "Start", "Select" }
+local pad_names = {}
+for key in pairs(joypad.get()) do
+  for _, name in ipairs(BUTTONS) do
+    if key == name or key == "P1 " .. name then
+      pad_names[name] = key
+    end
+  end
 end
 
-local ACTIVE = byte(0x021C7725) -- 0 with Aang, 1 with Sokka
-local FLAG_A = byte(0x021EA06C) -- 0 with Aang, 1 with Sokka
-local FLAG_B = byte(0x021EA26A) -- 1 with Aang, 0 with Sokka
-local INDEX_2 = byte(0x021D3E24) -- 0 with Aang, 1 with Sokka
-local INDEX_3 = byte(0x021D3E60) -- 5 with Aang, 4 with Sokka
+-- A "tag-in": control goes to the other hero for `frames` frames with
+-- `button` pressed (and Player 1's buttons released), then comes back.
+local tag = nil
 
-local function swap01(entry)
-  mem.write(entry, mem.read(entry) == 0 and 1 or 0)
+local function start_tag(button, frames)
+  local home = mem.read(ACTIVE)
+  tag = { button = button, left = frames, home = home, other = home == 0 and 1 or 0 }
 end
 
--- `hold` experiments rewrite their values every frame while switched on;
--- the others change the values once.
+local function run_tag()
+  if not tag then
+    return
+  end
+  if tag.left > 0 then
+    mem.write(ACTIVE, tag.other)
+    local pad = {}
+    for _, name in ipairs(BUTTONS) do
+      if pad_names[name] then
+        pad[pad_names[name]] = name == tag.button
+      end
+    end
+    joypad.set(pad)
+    tag.left = tag.left - 1
+  else
+    mem.write(ACTIVE, tag.home)
+    tag = nil
+  end
+end
+
 local experiments = {
-  { name = "Flip 021C7725 (0 <-> 1) once", run = function() swap01(ACTIVE) end },
-  {
-    name = "Hold both flags ON (021EA06C, 021EA26A = 1)",
-    hold = function()
-      mem.write(FLAG_A, 1)
-      mem.write(FLAG_B, 1)
-    end,
-  },
-  {
-    name = "Hold both flags OFF (021EA06C, 021EA26A = 0)",
-    hold = function()
-      mem.write(FLAG_A, 0)
-      mem.write(FLAG_B, 0)
-    end,
-  },
-  {
-    name = "Swap the two flags once",
-    run = function()
-      local a, b = mem.read(FLAG_A), mem.read(FLAG_B)
-      mem.write(FLAG_A, b)
-      mem.write(FLAG_B, a)
-    end,
-  },
-  { name = "Flip 021D3E24 (0 <-> 1) once", run = function() swap01(INDEX_2) end },
-  {
-    name = "Flip 021D3E60 (5 <-> 4) once",
-    run = function()
-      mem.write(INDEX_3, mem.read(INDEX_3) == 5 and 4 or 5)
-    end,
-  },
-}
-
-local watches = {
-  { "021C7725", ACTIVE },
-  { "021EA06C", FLAG_A },
-  { "021EA26A", FLAG_B },
-  { "021D3E24", INDEX_2 },
-  { "021D3E60", INDEX_3 },
+  { name = "Switch control to the other hero", run = function() mem.write(ACTIVE, mem.read(ACTIVE) == 0 and 1 or 0) end },
+  { name = "Other hero presses A for 1 frame, then back", run = function() start_tag("A", 1) end },
+  { name = "Other hero presses A for 4 frames, then back", run = function() start_tag("A", 4) end },
+  { name = "Other hero presses A for 12 frames, then back", run = function() start_tag("A", 12) end },
+  { name = "Other hero presses B for 4 frames, then back", run = function() start_tag("B", 4) end },
+  { name = "Other hero presses Y for 4 frames, then back", run = function() start_tag("Y", 4) end },
 }
 
 -- Number keys, by the names BizHawk may use (the same list as config.lua).
@@ -72,8 +70,7 @@ local function digit_names(n)
 end
 
 local start = memorysavestate.savecorestate()
-local status = "Saved. Press 1-6 to try an experiment, 0 to rewind."
-local held = {}
+local status = "Saved. Press 1-6 to try an experiment, 9 to change switch, 0 to rewind."
 local previous = {}
 
 local function pressed(keys, n)
@@ -89,38 +86,31 @@ while true do
   local keys = input.get()
   if pressed(keys, 0) then
     memorysavestate.loadcorestate(start)
-    held = {}
-    status = "Rewound to the start. All experiments off."
+    tag = nil
+    status = "Rewound to the start."
+  end
+  if pressed(keys, 9) and not tag then
+    ACTIVE = ACTIVE == SWITCHES[1] and SWITCHES[2] or SWITCHES[1]
+    status = string.format("Experiments now use %08X", ACTIVE.addr)
   end
   for i, e in ipairs(experiments) do
-    if pressed(keys, i) then
-      if e.hold then
-        held[i] = not held[i]
-        status = string.format("%d: %s - %s", i, e.name, held[i] and "ON" or "off")
-      else
-        e.run()
-        status = string.format("%d: %s - done", i, e.name)
-      end
+    if pressed(keys, i) and not tag then
+      e.run()
+      status = string.format("%d: %s", i, e.name)
       console.log(status)
     end
   end
   previous = keys
-  for i, e in ipairs(experiments) do
-    if held[i] then
-      e.hold()
-    end
-  end
+  run_tag()
 
   gui.text(2, 2, status)
   local y = 18
   for i, e in ipairs(experiments) do
-    gui.text(2, y, string.format("%d%s %s", i, held[i] and "*" or " ", e.name))
+    gui.text(2, y, string.format("%d %s", i, e.name))
     y = y + 14
   end
-  y = y + 6
-  for _, w in ipairs(watches) do
-    gui.text(2, y, string.format("%s = %d", w[1], mem.read(w[2])))
-    y = y + 14
-  end
+  gui.text(2, y + 6, string.format("Using switch %08X (9 = change): hero %d%s", ACTIVE.addr, mem.read(ACTIVE),
+    tag and " (tagged in)" or ""))
+  gui.text(2, y + 20, string.format("021D3E24 = %d   021C7725 = %d", mem.read(SWITCHES[1]), mem.read(SWITCHES[2])))
   emu.frameadvance()
 end
