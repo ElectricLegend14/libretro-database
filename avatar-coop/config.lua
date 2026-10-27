@@ -1,9 +1,7 @@
 -- Settings for the Avatar: The Last Airbender (DS) co-op script.
 --
--- The memory addresses below are still unknown: they have to be found with
--- BizHawk's RAM Search (see README.md, "Finding the addresses"). Until the
--- required ones are filled in, coop.lua shows a "setup needed" message and
--- leaves the game alone.
+-- Addresses were found with finder.lua (see README.md). Each hero's data has
+-- the same layout: x at +0x00, depth at +0x08, facing at +0x1C.
 --
 -- An address can be written two ways:
 --   { addr = 0x0212A4C0 }                  -- fixed location in Main RAM
@@ -12,24 +10,25 @@
 -- Add `size = 2` or `size = 1` if a value is not 4 bytes wide.
 
 return {
-  -- The character Player 2 controls (a party member that follows Player 1).
+  -- The hero Player 2 controls: Sokka. These are heap addresses from one
+  -- level, so they may move in other levels until the pointer is known.
   p2 = {
-    x = nil, -- required: horizontal position
-    y = nil, -- required: vertical position (the depth axis if the game is 3D)
-    facing = nil, -- optional: direction the character faces
+    x = { addr = 0x02242A74 }, -- required: world x
+    y = { addr = 0x02242A7C }, -- required: world depth
+    facing = { addr = 0x02242A90 }, -- optional: direction the hero faces
     -- How far Player 2 moves per frame, in the game's own position units.
-    -- Aang walks about 10,000 per frame (finder: ~203,000 in 20 frames).
+    -- Heroes walk about 10,000 per frame (finder: ~203,000 in 20 frames).
     speed = 10000,
-    -- Values written to `facing` for each direction, once you know them.
-    facing_values = { left = nil, right = nil, up = nil, down = nil },
+    -- Facing units in one full turn (a quarter turn measured as 16384).
+    facing_turn = 0x10000,
   },
 
-  -- Player 1's character. Optional: only used for the leash.
-  -- Aang, found with finder.lua in the first level. These are heap addresses
-  -- and may move in other levels until the pointer to them is known.
+  -- Player 1's position: a fixed copy of whichever hero they're controlling,
+  -- the same in every level. Required: coop.lua watches it to learn the
+  -- camera angle, so Player 2's controls match the screen.
   p1 = {
-    x = { addr = 0x02223FEC },
-    y = { addr = 0x02223FF4 },
+    x = { addr = 0x021C7E64 },
+    y = { addr = 0x021C7E6C },
   },
 
   -- Keep Player 2 within this distance of Player 1 so they can't wander off

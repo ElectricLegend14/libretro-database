@@ -9,11 +9,10 @@ mod lets Player 2 take over one of the computer-controlled heroes with a
 second gamepad or their own keyboard keys. The game itself is unchanged: each
 frame, the script moves Player 2's hero by writing to the game's memory.
 
-> **Status: tools ready, addresses not found yet.** Everything is written and
-> tested against a simulated game, but the scripts still need the memory
-> locations of the heroes' positions. `finder.lua` finds them for you in a few
-> minutes (see "Setup" below). Until they're filled in, `coop.lua` shows
-> "Co-op: setup needed" and leaves the game alone.
+> **Status: ready for a first real test.** Player 2 plays **Sokka**. His
+> addresses were found in one level and may move in others, until his pointer
+> is known (see "If the addresses stop working" below). Player 1's position
+> is a fixed address that works everywhere.
 
 ## What you need
 
@@ -90,11 +89,20 @@ poke-test them in **RAM Watch**.
 
 ## Playing
 
-1. Load the game and run `coop.lua`.
-2. Player 1 uses the normal DS controls. Player 2 uses **I J K L** to move by
-   default, or the D-pad on a second Xbox-style controller.
-3. **Player 1 shouldn't switch to Player 2's hero** on the touch screen,
-   or you'll both be steering the same hero.
+1. Load the game, get into a level, and run `coop.lua`.
+2. **Player 1: walk up, down, left and right once.** The camera angle changes
+   between levels, so the script watches which way your hero goes for each
+   button and steers Player 2 the same way. Until then, the screen says
+   which directions it still needs.
+3. Player 2 uses **I J K L** to move by default, or the D-pad on a second
+   Xbox-style controller.
+4. Player 1 plays as anyone except Sokka. **Don't switch to Sokka** on the
+   touch screen, or you'll both be steering him.
+
+When Player 2 lets go, the computer takes over Sokka again, like an autopilot.
+The script also watches how the game turns Sokka while the computer walks
+him, and uses that to make him face where Player 2 is walking. Until it has
+seen enough, the screen says "learning facing" and Sokka may walk sideways.
 
 BizHawk gives the DS only one controller port, so Player 2's buttons are read
 straight from your PC's keyboard and gamepads. To use a different controller,
@@ -109,8 +117,6 @@ If Player 2 moves too fast or too slow, change `p2.speed` in `config.lua`.
 
 ## Extras once the basics work
 
-- **Facing direction:** find the value that changes when Player 2's hero turns,
-  and set `p2.facing` and `p2.facing_values`.
 - **Attacks and bending:** find a value that changes when that hero attacks
   (often an "action state"). Add it to `actions` with a button. While that
   button is held, its value is written every frame.
@@ -121,10 +127,10 @@ If Player 2 moves too fast or too slow, change `p2.speed` in `config.lua`.
 
 ## Known limits
 
-- These scripts are tested against a simulated game, not the real one yet.
-- The game's own AI also moves Player 2's hero. The script overrides it on any
-  frame where Player 2 presses a direction. When Player 2 lets go, the AI takes
-  over again, which works as an "autopilot".
+- Movement has been tested against a simulated game at many camera angles,
+  but not in the real game yet.
 - Player 2 can move but can't attack until an action address is found.
+- Sokka's addresses come from one level. If Player 2 stops moving in another
+  level, run the finder there as Sokka and send the results.
 - It only works in BizHawk, not on a real DS. Real hardware would need a ROM
   hack, which is much bigger.
