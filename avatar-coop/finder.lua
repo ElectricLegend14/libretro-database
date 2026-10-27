@@ -9,9 +9,13 @@
 --   T      run the automatic search (about 20 seconds)
 --   N / B  teleport-test the next / previous candidate
 --   M      mark the candidate being tested as a real position
+--   P      run the button search: presses A, B, X and Y by itself and finds
+--          values that follow them, such as the hero's own "controller"
 -- Results are saved to finder-results.txt next to this script.
 
 local here = debug.getinfo(1, "S").source:match("^@(.*[/\\])") or ""
+local cfg = dofile(here .. "config.lua")
+local mem = dofile(here .. "memory.lua")
 
 local DOMAIN = "Main RAM"
 local RAM_SIZE = 0x400000
@@ -20,16 +24,17 @@ local SETTLE = 30 -- frames to wait for everyone to stop moving
 local ROUNDS = 3
 local SHOW = 8 -- candidates listed on screen
 
-local status = "Stand in an open area, then press T to search."
+local status = "Stand in an open area, then press T (positions) or P (buttons)."
 local candidates = {}
 local current = 0
 local test_state = nil
+local button_results = nil
 
--- The DS has one controller; find what BizHawk calls its D-pad buttons.
+-- The DS has one controller; find what BizHawk calls its buttons.
 local buttons = {}
 for key in pairs(joypad.get()) do
-  for _, name in ipairs({ "Up", "Down", "Left", "Right" }) do
-    if key == name or key:sub(-#name - 1) == " " .. name then
+  for _, name in ipairs({ "Up", "Down", "Left", "Right", "A", "B", "X", "Y" }) do
+    if key == name or key == "P1 " .. name then
       buttons[name] = key
     end
   end
@@ -66,14 +71,27 @@ local function wait(n)
   end
 end
 
+-- All of Main RAM as a byte table, and the index of its first byte.
+local function ram_bytes()
+  if memory.read_bytes_as_array then
+    return memory.read_bytes_as_array(0, RAM_SIZE, DOMAIN), 1
+  end
+  return memory.readbyterange(0, RAM_SIZE, DOMAIN), 0
+end
+
+-- Every 2-byte-aligned unsigned 16-bit value in Main RAM, keyed by offset.
+local function read_all16()
+  local bytes, base = ram_bytes()
+  local values = {}
+  for off = 0, RAM_SIZE - 2, 2 do
+    values[off] = bytes[off + base] + bytes[off + base + 1] * 0x100
+  end
+  return values
+end
+
 -- Every 4-byte-aligned signed value in Main RAM, keyed by offset.
 local function read_all()
-  local bytes, base
-  if memory.read_bytes_as_array then
-    bytes, base = memory.read_bytes_as_array(0, RAM_SIZE, DOMAIN), 1
-  else
-    bytes, base = memory.readbyterange(0, RAM_SIZE, DOMAIN), 0
-  end
+  local bytes, base = ram_bytes()
   local values = {}
   for off = 0, RAM_SIZE - 4, 4 do
     local i = off + base
@@ -163,7 +181,113 @@ local function save_results()
       end
     end
   end
+  if button_results then
+    f:write("\nButtons (16-bit value with each held)\n")
+    f:write("address     none    A       B       X       Y\n")
+    for _, r in ipairs(button_results.found) do
+      f:write(string.format("0x%08X  0x%04X  0x%04X  0x%04X  0x%04X  0x%04X\n", 0x02000000 + r.off,
+        r.values.none, r.values.A, r.values.B, r.values.X, r.values.Y))
+    end
+    f:write("\nControlled hero's data (x address):\n")
+    for _, off in ipairs(button_results.heroes) do
+      f:write(string.format("  0x%08X\n", 0x02000000 + off))
+    end
+  end
   f:close()
+end
+
+-- Each button is pressed twice, in a different order, so values that merely
+-- happen to change (timers, animations) are ruled out.
+local BUTTON_PATTERNS = { "none", "A", "B", "X", "Y", "none", "Y", "X", "B", "A", "none" }
+local BUTTON_HOLD = 4 -- frames held before reading
+local BUTTON_REST = 40 -- frames between presses, to let attacks finish
+local MAX_BUTTON_RESULTS = 40
+
+local function button_search()
+  local seen, offs, baseline = {}, nil, nil
+  for i, name in ipairs(BUTTON_PATTERNS) do
+    status = string.format("Button search %d of %d - hands off!", i, #BUTTON_PATTERNS)
+    wait(BUTTON_REST)
+    local pad = name ~= "none" and { [buttons[name]] = true } or nil
+    for _ = 1, BUTTON_HOLD do
+      frame(pad)
+    end
+    if not offs and i == 1 then
+      baseline = read_all16()
+    elseif not offs then
+      -- Keep only what differs between nothing held and A held.
+      offs = {}
+      for off, v in pairs(read_all16()) do
+        if v ~= baseline[off] then
+          offs[#offs + 1] = off
+          seen[off] = { none = baseline[off], [name] = v }
+        end
+      end
+      baseline = nil
+    else
+      local kept = {}
+      for _, off in ipairs(offs) do
+        local v = memory.read_u16_le(off, DOMAIN)
+        local s = seen[off]
+        if s[name] == nil or s[name] == v then
+          s[name] = v
+          kept[#kept + 1] = off
+        end
+      end
+      offs = kept
+    end
+  end
+  -- A real controller gives each button its own value.
+  local found = {}
+  for _, off in ipairs(offs) do
+    local s, distinct = seen[off], {}
+    for _, name in ipairs({ "none", "A", "B", "X", "Y" }) do
+      if s[name] ~= nil then
+        distinct[s[name]] = true
+      end
+    end
+    local count = 0
+    for _ in pairs(distinct) do
+      count = count + 1
+    end
+    if count == 5 and #found < MAX_BUTTON_RESULTS then
+      found[#found + 1] = { off = off, values = s }
+    end
+  end
+  table.sort(found, function(a, b)
+    return a.off < b.off
+  end)
+  return found
+end
+
+-- Where the controlled hero's own data is: every x/depth pair matching the
+-- fixed Player 1 copy, so button addresses can be turned into offsets.
+local function find_heroes()
+  local x, y = mem.read(cfg.p1.x), mem.read(cfg.p1.y)
+  local fixed = mem.resolve(cfg.p1.x)
+  local heroes = {}
+  if not x then
+    return heroes
+  end
+  local values = read_all()
+  for off, v in pairs(values) do
+    if v == x and values[off + 8] == y and off ~= fixed then
+      heroes[#heroes + 1] = off
+    end
+  end
+  table.sort(heroes)
+  return heroes
+end
+
+local function run_button_search()
+  local start = memorysavestate.savecorestate()
+  local found = button_search()
+  memorysavestate.loadcorestate(start)
+  memorysavestate.removestate(start)
+  button_results = { found = found, heroes = find_heroes() }
+  save_results()
+  status = #found .. " button values saved to finder-results.txt."
+  console.log(status)
 end
 
 -- Positions in heap memory move between levels, but something always points
@@ -232,6 +356,8 @@ while true do
   end
   if buttons.Right and pressed("T") then
     run_search()
+  elseif buttons.A and pressed("P") then
+    run_button_search()
   elseif #candidates > 0 and pressed("N") then
     test(current % #candidates + 1)
   elseif #candidates > 0 and pressed("B") then

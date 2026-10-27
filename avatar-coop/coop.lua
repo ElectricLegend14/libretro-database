@@ -1,15 +1,17 @@
 -- Avatar: The Last Airbender (DS) co-op for BizHawk (melonDS core).
 --
 -- Player 1 plays normally on the emulator's controller. Player 2 takes over
--- a party member with their own keys or a second gamepad: every frame this
--- script reads Player 2's input and moves that character by writing to the
--- game's memory. Open it from Tools > Lua Console after loading the game.
+-- one of the other heroes with their own keys or a second gamepad, and can
+-- switch between heroes. Each hero's computer control (AI) can be turned on
+-- or off. Every frame this script reads Player 2's input and moves their
+-- hero by writing to the game's memory. Open it from Tools > Lua Console
+-- after loading the game.
 --
 -- The camera angle changes between levels, so "right" on screen can be any
 -- direction in the game world. The script learns each screen direction by
 -- watching which way Player 1's hero moves when they press it, and learns
--- how facing values work by watching the game turn Player 2's hero while
--- the computer walks it.
+-- how facing values work by watching the game turn heroes while the
+-- computer walks them.
 
 local here = debug.getinfo(1, "S").source:match("^@(.*[/\\])") or ""
 local cfg = dofile(here .. "config.lua")
@@ -22,6 +24,7 @@ local OPPOSITE = { up = "down", down = "up", left = "right", right = "left" }
 -- still, or a jump such as a level load or cutscene.
 local MIN_STEP, MAX_STEP = cfg.p2.speed / 3, cfg.p2.speed * 4
 local FACING_SAMPLES = 40
+local SPEED_SAMPLES = 30
 
 if gameinfo.getromhash():upper() ~= EXPECTED_SHA1 then
   console.log("Warning: this doesn't look like Avatar - The Last Airbender (USA).")
@@ -33,14 +36,33 @@ local pad_names = {}
 for key in pairs(joypad.get()) do
   for _, dir in ipairs(DIRS) do
     local name = dir:sub(1, 1):upper() .. dir:sub(2)
-    if key == name or key:sub(-#name - 1) == " " .. name then
+    if key == name or key == "P1 " .. name then
       pad_names[dir] = key
     end
   end
 end
 
+-- Heroes whose data location is known, with entries for each of their values.
+local heroes = {}
+for i, h in ipairs(cfg.heroes) do
+  if h.at then
+    local L = cfg.layout
+    heroes[#heroes + 1] = {
+      name = h.name,
+      toggle = cfg.ai_toggle[i],
+      x = mem.field(h.at, L.x),
+      y = mem.field(h.at, L.y),
+      facing = L.facing and mem.field(h.at, L.facing),
+      pad = L.pad and mem.field(h.at, L.pad, 2),
+      ai = true,
+      last = nil, -- position after last frame, and whether Player 2 moved it
+      anchor = nil, -- where the hero is held while its AI is off
+    }
+  end
+end
+
 local function held(keys, names)
-  for _, name in ipairs(names) do
+  for _, name in ipairs(names or {}) do
     if keys[name] then
       return true
     end
@@ -66,6 +88,18 @@ end
 -- Screen directions as unit vectors in the game world.
 local screen = {}
 local last_p1 = nil
+-- Recent per-frame step lengths of Player 1's hero, so Player 2 moves at
+-- the same speed.
+local p1_steps = {}
+
+local function walk_speed()
+  if #p1_steps < 5 then
+    return cfg.p2.speed
+  end
+  local sorted = { table.unpack(p1_steps) }
+  table.sort(sorted)
+  return sorted[math.ceil(#sorted / 2)]
+end
 
 local function learn_screen(p1x, p1y)
   if last_p1 then
@@ -79,6 +113,10 @@ local function learn_screen(p1x, p1y)
     end
     if count == 1 and len >= MIN_STEP and len <= MAX_STEP then
       screen[only] = { x = dx / len, y = dy / len }
+      table.insert(p1_steps, len)
+      if #p1_steps > SPEED_SAMPLES then
+        table.remove(p1_steps, 1)
+      end
     end
   end
   last_p1 = { x = p1x, y = p1y }
@@ -94,7 +132,8 @@ local function screen_vector(dir)
 end
 
 -- Facing model: facing = offset + sign * angle_of(direction), in units of
--- cfg.p2.facing_turn per full turn. Fitted from the computer's own moves.
+-- cfg.p2.facing_turn per full turn. All heroes share it; it's fitted from
+-- the computer's own moves.
 local facing_samples = {}
 local facing_model = nil
 local TWO_PI = 2 * math.pi
@@ -131,12 +170,11 @@ local function fit_facing()
   facing_model = best.agreement > 0.9 and best or nil
 end
 
-local last_p2 = nil
-
-local function learn_facing(x, y)
-  local face = mem.read(cfg.p2.facing)
-  if last_p2 and face then
-    local dx, dy = x - last_p2.x, y - last_p2.y
+-- Learn from a hero the computer is walking.
+local function learn_facing(hero, x, y)
+  local face = mem.read(hero.facing)
+  if hero.last and not hero.last.steered and face then
+    local dx, dy = x - hero.last.x, y - hero.last.y
     local len = math.sqrt(dx * dx + dy * dy)
     if len >= MIN_STEP and len <= MAX_STEP then
       table.insert(facing_samples, { angle = angle_of(dx, dy), face = face })
@@ -148,8 +186,8 @@ local function learn_facing(x, y)
   end
 end
 
-local function face_toward(vx, vy)
-  local current = mem.read(cfg.p2.facing)
+local function face_toward(hero, vx, vy)
+  local current = mem.read(hero.facing)
   if not facing_model or not current then
     return
   end
@@ -158,7 +196,7 @@ local function face_toward(vx, vy)
   -- Write the nearest equivalent of the target, so the value stays in
   -- whatever range the game itself uses.
   local diff = (target - current + turn / 2) % turn - turn / 2
-  mem.write(cfg.p2.facing, current + diff)
+  mem.write(hero.facing, current + diff)
 end
 
 -- Player 2's input as a world-space direction. Also reports whether any of
@@ -183,6 +221,57 @@ local function p2_vector(keys)
   return vx, vy, pressed, unknown
 end
 
+-- Move Player 2's hero one step. The game's AI may keep walking the hero
+-- too, which would add to Player 2's speed, so its moves are ignored except
+-- ones against Player 2's direction: those are the game pushing the hero
+-- back out of a wall.
+local function steer(hero, x, y, vx, vy, p1x, p1y)
+  local bx, by = x, y
+  if hero.last and hero.last.steered and (x - hero.last.x) * vx + (y - hero.last.y) * vy >= 0 then
+    bx, by = hero.last.x, hero.last.y
+  end
+  local speed = walk_speed()
+  local nx, ny = bx + vx * speed, by + vy * speed
+  if cfg.leash then
+    nx, ny = leash(bx, by, nx, ny, p1x, p1y)
+  end
+  mem.write(hero.x, nx)
+  mem.write(hero.y, ny)
+  if hero.facing then
+    face_toward(hero, vx, vy)
+  end
+end
+
+-- Player 2's A/B/X/Y, written into their hero's own controller value. Each
+-- held button flips the same bits it flips when held alone, so combinations
+-- work whether the game uses 1 or 0 for "pressed". Returns whether any
+-- button is held.
+local function press_buttons(hero, keys)
+  local v, value, any = cfg.p2.pad_values, cfg.p2.pad_values.none, false
+  for _, b in ipairs({ "A", "B", "X", "Y" }) do
+    if held(keys, cfg.p2_buttons[b]) then
+      any = true
+      if hero.pad then
+        value = value ~ (v[b] ~ v.none)
+      end
+    end
+  end
+  if any and hero.pad then
+    mem.write(hero.pad, value)
+  end
+  return any
+end
+
+-- With its AI off, a hero stays where it is unless Player 2 moves it.
+local function hold_still(hero, x, y)
+  hero.anchor = hero.anchor or { x = x, y = y }
+  mem.write(hero.x, hero.anchor.x)
+  mem.write(hero.y, hero.anchor.y)
+  if hero.pad then
+    mem.write(hero.pad, cfg.p2.pad_values.none)
+  end
+end
+
 local function run_actions(keys)
   for _, action in pairs(cfg.actions) do
     if keys[action.button] then
@@ -200,56 +289,120 @@ local function host_input_text(keys)
   return "Host input: " .. table.concat(names, " ")
 end
 
--- One frame of co-op. Returns the status line to show.
-local function step(keys)
+-- Player 2's hero, by index into `heroes`.
+local p2_index = 1
+for i, hero in ipairs(heroes) do
+  if hero.name == cfg.p2.hero then
+    p2_index = i
+  end
+end
+
+-- The hero standing where Player 1's fixed position copy says (closest one,
+-- in case the copy lags a frame behind).
+local function p1_hero(p1x, p1y)
+  local best, best_d = nil, MAX_STEP
+  for i, hero in ipairs(heroes) do
+    local x, y = mem.read(hero.x), mem.read(hero.y)
+    if x and y then
+      local d = math.sqrt((x - p1x) ^ 2 + (y - p1y) ^ 2)
+      if d <= best_d then
+        best, best_d = i, d
+      end
+    end
+  end
+  return best
+end
+
+-- Next hero for Player 2 after `from`, skipping Player 1's and missing ones.
+local function next_hero(from, skip)
+  for step = 1, #heroes do
+    local i = (from + step - 1) % #heroes + 1
+    if i ~= skip and mem.read(heroes[i].x) then
+      return i
+    end
+  end
+  return from
+end
+
+-- One frame of co-op. `pressed` holds keys that went down this frame.
+-- Returns the lines to show.
+local function step(keys, pressed)
   local p1x, p1y = mem.read(cfg.p1.x), mem.read(cfg.p1.y)
-  local x, y = mem.read(cfg.p2.x), mem.read(cfg.p2.y)
-  if not (p1x and p1y and x and y) then
-    last_p1, last_p2 = nil, nil
-    return "Co-op: waiting for the heroes"
+  if not (p1x and p1y) then
+    last_p1 = nil
+    return { "Co-op: waiting for the heroes" }
   end
   learn_screen(p1x, p1y)
 
-  local vx, vy, pressed, unknown = p2_vector(keys)
-  if not pressed then
-    -- The computer is steering Player 2's hero: learn how it faces.
-    learn_facing(x, y)
-  elseif vx ~= 0 or vy ~= 0 then
-    local nx, ny = x + vx * cfg.p2.speed, y + vy * cfg.p2.speed
-    if cfg.leash then
-      nx, ny = leash(x, y, nx, ny, p1x, p1y)
-    end
-    mem.write(cfg.p2.x, nx)
-    mem.write(cfg.p2.y, ny)
-    if cfg.p2.facing then
-      face_toward(vx, vy)
+  local p1 = p1_hero(p1x, p1y)
+  if held(pressed, cfg.p2_switch) or p2_index == p1 then
+    p2_index = next_hero(p2_index, p1)
+  end
+  for i, hero in ipairs(heroes) do
+    if held(pressed, hero.toggle) then
+      hero.ai, hero.anchor = not hero.ai, nil
     end
   end
-  last_p2 = { x = mem.read(cfg.p2.x), y = mem.read(cfg.p2.y) }
+
+  local vx, vy, moving, unknown = p2_vector(keys)
+  local buttons = false
+  for i, hero in ipairs(heroes) do
+    local x, y = mem.read(hero.x), mem.read(hero.y)
+    local steered = false
+    if x and y and i ~= p1 then
+      if i == p2_index and moving and (vx ~= 0 or vy ~= 0) then
+        steer(hero, x, y, vx, vy, p1x, p1y)
+        hero.anchor, steered = nil, true
+      elseif hero.ai then
+        learn_facing(hero, x, y)
+      else
+        hold_still(hero, x, y)
+      end
+      if i == p2_index then
+        buttons = press_buttons(hero, keys)
+      end
+    end
+    hero.last = x and { x = mem.read(hero.x), y = mem.read(hero.y), steered = steered }
+  end
   run_actions(keys)
 
+  local status = "Co-op: P2 ready" .. (facing_model and "" or " (learning facing)")
   if unknown then
-    return "Co-op: P1, walk in every direction once so P2's controls can learn the camera"
+    status = "Co-op: P1, walk in every direction once so P2's controls can learn the camera"
+  elseif buttons and not cfg.layout.pad then
+    status = "Co-op: P2's buttons aren't set up yet (run the finder's button search)"
   end
-  return "Co-op: P2 ready" .. (cfg.p2.facing and not facing_model and " (learning facing)" or "")
+  local party = {}
+  for i, hero in ipairs(heroes) do
+    local role = i == p1 and "P1" or (i == p2_index and "P2" or "")
+    party[#party + 1] = string.format("%d %s%s AI %s", i, hero.name, role ~= "" and " (" .. role .. ")" or "",
+      hero.ai and "on" or "off")
+  end
+  return { status, "P2: " .. heroes[p2_index].name .. "  (H = switch hero)", table.concat(party, " | ") }
 end
 
-local configured = cfg.p1.x and cfg.p1.y and cfg.p2.x and cfg.p2.y
+local configured = cfg.p1.x and cfg.p1.y and #heroes > 0
 if not configured then
-  console.log("Co-op setup needed: fill in p1 and p2 in config.lua (see README.md).")
+  console.log("Co-op setup needed: fill in p1 and heroes in config.lua (see README.md).")
 end
 
+local previous = {}
 while true do
   local keys = input.get()
-
-  if configured then
-    gui.text(2, 2, step(keys))
-  else
-    gui.text(2, 2, "Co-op: setup needed - see README.md")
+  local pressed = {}
+  for name in pairs(keys) do
+    if not previous[name] then
+      pressed[name] = true
+    end
   end
+  previous = keys
 
+  local lines = configured and step(keys, pressed) or { "Co-op: setup needed - see README.md" }
   if cfg.show_host_input then
-    gui.text(2, 18, host_input_text(keys))
+    lines[#lines + 1] = host_input_text(keys)
+  end
+  for i, line in ipairs(lines) do
+    gui.text(2, 2 + (i - 1) * 16, line)
   end
 
   emu.frameadvance()

@@ -8,18 +8,25 @@ local mem = dofile(here .. "memory.lua")
 local watches = {
   { "P1 x", cfg.p1.x },
   { "P1 y", cfg.p1.y },
-  { "P2 x", cfg.p2.x },
-  { "P2 y", cfg.p2.y },
-  { "P2 facing", cfg.p2.facing },
 }
+for _, h in ipairs(cfg.heroes) do
+  if h.at then
+    local L = cfg.layout
+    watches[#watches + 1] = { h.name .. " x", mem.field(h.at, L.x) }
+    watches[#watches + 1] = { h.name .. " y", mem.field(h.at, L.y) }
+    if L.facing then
+      watches[#watches + 1] = { h.name .. " facing", mem.field(h.at, L.facing) }
+    end
+    if L.pad then
+      watches[#watches + 1] = { h.name .. " pad", mem.field(h.at, L.pad, 2) }
+    end
+  end
+end
 for name, action in pairs(cfg.actions) do
   watches[#watches + 1] = { "action " .. name, action }
 end
 
 local function describe(entry)
-  if entry == nil then
-    return "not set"
-  end
   local offset = mem.resolve(entry)
   if not offset then
     return "unavailable (null pointer?)"

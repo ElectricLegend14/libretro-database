@@ -23,6 +23,10 @@ function M.resolve(entry)
   if entry == nil then
     return nil
   end
+  if entry.base then
+    local b = M.resolve(entry.base)
+    return b and to_offset(b + entry.offset)
+  end
   if entry.ptr then
     local p = to_offset(entry.ptr)
     if not p then
@@ -36,6 +40,11 @@ function M.resolve(entry)
     return t and to_offset(t + (entry.offset or 0))
   end
   return entry.addr and to_offset(entry.addr)
+end
+
+-- An entry for the value `offset` bytes after another entry's address.
+function M.field(base, offset, size)
+  return { base = base, offset = offset, size = size }
 end
 
 local readers = {
@@ -62,7 +71,14 @@ function M.write(entry, value)
   if not a then
     return false
   end
-  writers[entry.size or 4](a, math.floor(value))
+  -- Wrap into the signed range, so unsigned values like 0xFFFF fit too.
+  local size = entry.size or 4
+  local range = 2 ^ (size * 8)
+  value = math.floor(value) % range
+  if value >= range / 2 then
+    value = value - range
+  end
+  writers[size](a, math.floor(value))
   return true
 end
 
