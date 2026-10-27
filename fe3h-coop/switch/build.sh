@@ -3,6 +3,7 @@
 #
 #   ./switch/build.sh            build into switch/exlaunch/deploy/
 #   RYU_PATH=... ./switch/build.sh deploy-ryu   build and copy into Ryujinx's mods folder
+#   COOP_BARE=1 ./switch/build.sh               test module that only logs that it loaded
 #
 # Needs devkitPro with devkitA64 and libnx installed and DEVKITPRO set:
 # https://devkitpro.org/wiki/Getting_Started
@@ -53,18 +54,28 @@ sed -i \
     -e "s|^LOAD_KIND :=.*|LOAD_KIND := Module|" \
     -e "s|^PROGRAM_ID :=.*|PROGRAM_ID := $PROGRAM_ID|" \
     -e "s|^NPDM_JSON :=.*|NPDM_JSON := fe3h-coop.json|" \
+    -e "s|^C_FLAGS :=.*|C_FLAGS := ${COOP_BARE:+-DFE3H_COOP_BARE}|" \
     "$EXL/config.mk"
 if [ -n "${RYU_PATH:-}" ]; then
     sed -i "s|^RYU_PATH :=.*|RYU_PATH := $RYU_PATH|" "$EXL/config.mk"
 fi
 
 cd "$EXL"
+# Always rebuild from scratch: switching COOP_BARE changes flags make can't see.
+./exlaunch.sh clean >/dev/null
 ./exlaunch.sh build
+# Replacing the game's own main.npdm can stop it from booting, so it's
+# opt-in (COOP_NPDM=1). It's only needed if the mod can't read the SD card.
+if [ -z "${COOP_NPDM:-}" ]; then
+    mv deploy/main.npdm "$EXL/optional-main.npdm"
+fi
 if [ "${1:-}" = "deploy-ryu" ]; then
     ./exlaunch.sh deploy-ryu
 fi
 
 echo
-echo "Built: $EXL/deploy/subsdk9 and $EXL/deploy/main.npdm"
-echo "Copy both into atmosphere/contents/$PROGRAM_ID/exefs/ (Switch)"
+echo "Built: $EXL/deploy/subsdk9"
+echo "Copy it into atmosphere/contents/$PROGRAM_ID/exefs/ (Switch)"
 echo "or <Ryujinx>/mods/contents/$PROGRAM_ID/fe3h-coop/exefs/ (emulator)."
+[ -z "${COOP_NPDM:-}" ] && echo "Optional NPDM (only if settings don't load): $EXL/optional-main.npdm"
+exit 0

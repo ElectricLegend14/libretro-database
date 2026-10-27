@@ -31,6 +31,9 @@ jobs:
     name: Switch module
     runs-on: ubuntu-latest
     container: devkitpro/devkita64:latest
+    env:
+      TID: 010055D009F78000
+      EXL: fe3h-coop/switch/exlaunch
     steps:
       - uses: actions/checkout@v4
       - name: Install build helpers
@@ -38,32 +41,52 @@ jobs:
           command -v python3 >/dev/null && command -v git >/dev/null || {
             apt-get update && apt-get install -y --no-install-recommends python3 git
           }
-      - name: Build
-        run: ./fe3h-coop/switch/build.sh
+      - name: Build bare test module
+        run: |
+          COOP_BARE=1 ./fe3h-coop/switch/build.sh
+          mkdir -p staging/bare && cp $EXL/deploy/subsdk9 staging/bare/
+      - name: Build full module
+        run: |
+          ./fe3h-coop/switch/build.sh
+          mkdir -p staging/full && cp $EXL/deploy/subsdk9 staging/full/ && cp $EXL/optional-main.npdm staging/
+      - name: Show what the module needs from the game
+        run: |
+          echo "Imports the game must provide (should be only C library functions like malloc/memcpy):"
+          $DEVKITPRO/devkitA64/bin/aarch64-none-elf-nm -D --undefined-only $EXL/exlaunch.elf
       - name: Package
         run: |
           set -e
-          TID=010055D009F78000
-          DEPLOY=fe3h-coop/switch/exlaunch/deploy
           OUT=package
-          # Switch SD card (Atmosphère)
-          mkdir -p $OUT/switch-sd/atmosphere/contents/$TID/exefs $OUT/switch-sd/config/fe3h-coop
-          cp $DEPLOY/subsdk9 $DEPLOY/main.npdm $OUT/switch-sd/atmosphere/contents/$TID/exefs/
-          cp fe3h-coop/config/coop.ini fe3h-coop/config/offsets.ini $OUT/switch-sd/config/fe3h-coop/
-          # Ryujinx data folder
-          mkdir -p $OUT/ryujinx/mods/contents/$TID/fe3h-coop/exefs $OUT/ryujinx/sdcard/config/fe3h-coop
-          cp $DEPLOY/subsdk9 $DEPLOY/main.npdm $OUT/ryujinx/mods/contents/$TID/fe3h-coop/exefs/
-          cp fe3h-coop/config/coop.ini fe3h-coop/config/offsets.ini $OUT/ryujinx/sdcard/config/fe3h-coop/
+          layout() {  # layout <subsdk9 dir> <dest>
+            mkdir -p $2/ryujinx/mods/contents/$TID/fe3h-coop/exefs $2/ryujinx/sdcard/config/fe3h-coop
+            mkdir -p $2/switch-sd/atmosphere/contents/$TID/exefs $2/switch-sd/config/fe3h-coop
+            cp $1/subsdk9 $2/ryujinx/mods/contents/$TID/fe3h-coop/exefs/
+            cp $1/subsdk9 $2/switch-sd/atmosphere/contents/$TID/exefs/
+            cp fe3h-coop/config/coop.ini fe3h-coop/config/offsets.ini $2/ryujinx/sdcard/config/fe3h-coop/
+            cp fe3h-coop/config/coop.ini fe3h-coop/config/offsets.ini $2/switch-sd/config/fe3h-coop/
+          }
+          layout staging/full $OUT/1-mod
+          layout staging/bare $OUT/2-bare-test
+          mkdir -p $OUT/3-optional && cp staging/optional-main.npdm $OUT/3-optional/main.npdm
           cat > $OUT/INSTALL.txt <<'EOF'
           FE3H co-op mod (development build)
 
-          Ryujinx: copy the contents of ryujinx/ into your Ryujinx data folder
-            (File > Open Ryujinx Folder).
-          Switch:  copy the contents of switch-sd/ to the root of your SD card.
+          1-mod/        The mod. Install ONE of:
+                          ryujinx/   -> into your Ryujinx data folder (File > Open Ryujinx Folder)
+                          switch-sd/ -> onto the root of your SD card
+          2-bare-test/  A test module that only writes "[coop] bare test module loaded"
+                        to the log and does nothing else. Use it in place of 1-mod if
+                        the game won't start, to see whether the mod loader itself works.
+          3-optional/   main.npdm. Only add it next to subsdk9 if the mod starts but
+                        can't read your coop.ini on a real Switch. Remove it if the
+                        game stops booting.
 
-          Then edit config/fe3h-coop/coop.ini (or make one with tools/picker.html).
+          Before installing a new build, delete any older main.npdm you copied into
+          the mod's exefs folder.
+
           In game: hold ZL + ZR and press Plus to pass the turn.
-          If the game won't start, delete main.npdm and keep only subsdk9.
+          Ryujinx log: Options > Settings > Logging (turn on guest/debug logs), then
+          look for lines starting with [coop].
           EOF
       - uses: actions/upload-artifact@v4
         with:

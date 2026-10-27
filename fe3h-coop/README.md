@@ -40,9 +40,9 @@ Only use this with a copy of the game you own.
    ```
 
    This downloads exlaunch, adds the mod's code, and builds
-   `switch/exlaunch/deploy/subsdk9` and `main.npdm`. To build and copy straight
-   into Ryujinx in one step:
-   `RYU_PATH="$HOME/.config/Ryujinx" ./switch/build.sh deploy-ryu`.
+   `switch/exlaunch/deploy/subsdk9`. To build and copy straight into Ryujinx
+   in one step: `RYU_PATH="$HOME/.config/Ryujinx" ./switch/build.sh deploy-ryu`.
+   `COOP_BARE=1` builds the do-nothing test module instead.
 
 3. **Install**
 
@@ -58,10 +58,20 @@ Only use this with a copy of the game you own.
    [docs/REVERSING.md](docs/REVERSING.md) step 1 has what to expect and what
    to do if it doesn't work.
 
-If the game won't start with the mod's `main.npdm`, try copying only `subsdk9`.
-The controller relay still works that way, but on a real Switch the mod may not
-be able to read the settings files, so it uses the defaults: two players, on
-controllers 1 and 2.
+### If the game won't start
+
+1. Make sure the mod's exefs folder holds only `subsdk9`. Delete any
+   `main.npdm` an older build put there.
+2. Try `2-bare-test` from the download instead of `1-mod`. It only writes
+   `[coop] bare test module loaded` to the log.
+   - If that doesn't start either, the problem is with loading mods at all
+     (title id, folder, or emulator version), not the co-op code.
+   - If it starts but `1-mod` doesn't, send me the last `[coop]` lines from
+     the log.
+
+Without `main.npdm`, a real Switch may not let the mod read the SD card. It
+then uses the default settings: two players, on controllers 1 and 2. If that
+happens, add `3-optional/main.npdm` next to `subsdk9`. Ryujinx doesn't need it.
 
 ## Player settings
 

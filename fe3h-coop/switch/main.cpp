@@ -11,9 +11,16 @@
 //                                        ->  players can only pick up their own units
 //   begin_player_phase + end_player_phase  ->  End Turn hands over to the next player
 //
+// Every SDK function is looked up by name at runtime instead of being
+// linked, so a name this game doesn't have is logged and skipped rather
+// than crashing the game at boot.
+//
 // Game-function callbacks take three extra u64 arguments and pass them on
 // to the original, so x1-x3 survive even if a function takes more arguments
 // than we know about. Confirm each signature in Ghidra before relying on it.
+//
+// Build with -DFE3H_COOP_BARE for a test module that only logs that it
+// loaded (switch/build.sh: COOP_BARE=1).
 
 #include <string>
 #include <type_traits>
@@ -25,11 +32,8 @@
 #include "coop/roster.hpp"
 #include "coop/settings.hpp"
 #include "lib.hpp"
-#include "nn/fs.hpp"
+#include "nn/fs/fs_types.hpp"
 
-// nn::hid declarations. These link against the game's copy of the SDK. If the
-// module fails to load with a missing symbol, compare these mangled names
-// with the imports listed in Ghidra (docs/REVERSING.md, step 2).
 namespace nn::hid {
 
 using NpadIdType = u32;
@@ -52,20 +56,82 @@ struct NpadFullKeyState : NpadBaseState {};
 struct NpadHandheldState : NpadBaseState {};
 struct NpadJoyDualState : NpadBaseState {};
 
-void GetNpadState(NpadFullKeyState*, const NpadIdType&);
-void GetNpadState(NpadHandheldState*, const NpadIdType&);
-void GetNpadState(NpadJoyDualState*, const NpadIdType&);
-int GetNpadStates(NpadFullKeyState*, int, const NpadIdType&);
-int GetNpadStates(NpadHandheldState*, int, const NpadIdType&);
-int GetNpadStates(NpadJoyDualState*, int, const NpadIdType&);
-
 }  // namespace nn::hid
 
 namespace {
 
+// ---- SDK lookup -------------------------------------------------------------
+
+// Address of a function the game's SDK exports, or 0 if it has none by that name.
+uintptr_t findSdkFunction(const char* name) {
+    for (auto index : {exl::util::ModuleIndex::Sdk, exl::util::ModuleIndex::Main}) {
+        if (!exl::util::HasModule(index)) continue;
+        const auto* sym = exl::reloc::GetSymbol(index, name);
+        if (sym && sym->st_value) return exl::util::GetModuleInfo(index).m_Total.m_Start + sym->st_value;
+    }
+    return 0;
+}
+
+// The first of several spellings that exists. NpadIdType is a plain u32 in
+// the SDK headers we know of (RKj); the enum spelling is a fallback.
+uintptr_t findSdkFunction(std::initializer_list<const char*> names, const char*& found) {
+    for (const char* n : names) {
+        if (uintptr_t addr = findSdkFunction(n)) {
+            found = n;
+            return addr;
+        }
+    }
+    found = nullptr;
+    return 0;
+}
+
+template <typename Fn>
+Fn sdkFunction(const char* name) {
+    return reinterpret_cast<Fn>(findSdkFunction(name));
+}
+
+// ---- SD card ----------------------------------------------------------------
+
 constexpr const char* kMount = "coopsd";
 constexpr const char* kConfigPath = "coopsd:/config/fe3h-coop/coop.ini";
 constexpr const char* kOffsetsPath = "coopsd:/config/fe3h-coop/offsets.ini";
+
+struct Fs {
+    void (*setEnabledAutoAbort)(bool);
+    Result (*mountSdCardForDebug)(const char*);
+    Result (*openFile)(nn::fs::FileHandle*, const char*, int);
+    Result (*getFileSize)(long*, nn::fs::FileHandle);
+    Result (*readFile)(nn::fs::FileHandle, long, void*, ulong);
+    void (*closeFile)(nn::fs::FileHandle);
+
+    bool usable() const { return mountSdCardForDebug && openFile && getFileSize && readFile && closeFile; }
+};
+
+Fs findFs() {
+    return {
+        sdkFunction<void (*)(bool)>("_ZN2nn2fs19SetEnabledAutoAbortEb"),
+        sdkFunction<Result (*)(const char*)>("_ZN2nn2fs19MountSdCardForDebugEPKc"),
+        sdkFunction<Result (*)(nn::fs::FileHandle*, const char*, int)>("_ZN2nn2fs8OpenFileEPNS0_10FileHandleEPKci"),
+        sdkFunction<Result (*)(long*, nn::fs::FileHandle)>("_ZN2nn2fs11GetFileSizeEPlNS0_10FileHandleE"),
+        sdkFunction<Result (*)(nn::fs::FileHandle, long, void*, ulong)>("_ZN2nn2fs8ReadFileENS0_10FileHandleElPvm"),
+        sdkFunction<void (*)(nn::fs::FileHandle)>("_ZN2nn2fs9CloseFileENS0_10FileHandleE"),
+    };
+}
+
+bool readSdFile(const Fs& fs, const char* path, std::string& out) {
+    nn::fs::FileHandle file;
+    if (fs.openFile(&file, path, nn::fs::OpenMode_Read) != 0) return false;
+    long size = 0;
+    bool ok = fs.getFileSize(&size, file) == 0 && size >= 0 && size < 64 * 1024;
+    if (ok) {
+        out.resize(size_t(size));
+        ok = fs.readFile(file, 0, out.data(), ulong(size)) == 0;
+    }
+    fs.closeFile(file);
+    return ok;
+}
+
+// ---- State ------------------------------------------------------------------
 
 coop::CoopState* g_state = nullptr;
 coop::InputRouter* g_router = nullptr;
@@ -80,19 +146,6 @@ void announce(const coop::TurnChange& change) {
     const auto& p = g_state->player(change.player);
     Logging.Log("[coop] %s's turn (%s)%s", p.name.c_str(), p.color.toHex().c_str(),
                 change.passController ? " - pass them the controller" : "");
-}
-
-bool readSdFile(const char* path, std::string& out) {
-    nn::fs::FileHandle file;
-    if (nn::fs::OpenFile(&file, path, nn::fs::OpenMode_Read) != 0) return false;
-    long size = 0;
-    bool ok = nn::fs::GetFileSize(&size, file) == 0 && size >= 0 && size < 64 * 1024;
-    if (ok) {
-        out.resize(size_t(size));
-        ok = nn::fs::ReadFile(file, 0, out.data(), ulong(size)) == 0;
-    }
-    nn::fs::CloseFile(file);
-    return ok;
 }
 
 // ---- Controller relay -------------------------------------------------------
@@ -114,37 +167,55 @@ void makeIdle(nn::hid::NpadBaseState* states, int count) {
     }
 }
 
-template <typename Hook, typename State>
-int relay(State* out, int count, const nn::hid::NpadIdType& id);
+// One hook per SDK function, for both the "many states" and "one state" forms.
+#define COOP_NPAD_HOOKS(Style)                                                                          \
+    HOOK_DEFINE_TRAMPOLINE(Style##Many) {                                                               \
+        static inline bool installed = false;                                                           \
+        static int Callback(nn::hid::Npad##Style##State* out, int count, const nn::hid::NpadIdType& id); \
+    };                                                                                                  \
+    HOOK_DEFINE_TRAMPOLINE(Style##One) {                                                                \
+        static inline bool installed = false;                                                           \
+        static void Callback(nn::hid::Npad##Style##State* out, const nn::hid::NpadIdType& id);         \
+    };
 
-HOOK_DEFINE_TRAMPOLINE(FullKeyStates) {
-    static int Callback(nn::hid::NpadFullKeyState* out, int count, const nn::hid::NpadIdType& id) {
-        return relay<FullKeyStates>(out, count, id);
-    }
-};
-HOOK_DEFINE_TRAMPOLINE(HandheldStates) {
-    static int Callback(nn::hid::NpadHandheldState* out, int count, const nn::hid::NpadIdType& id) {
-        return relay<HandheldStates>(out, count, id);
-    }
-};
-HOOK_DEFINE_TRAMPOLINE(JoyDualStates) {
-    static int Callback(nn::hid::NpadJoyDualState* out, int count, const nn::hid::NpadIdType& id) {
-        return relay<JoyDualStates>(out, count, id);
-    }
-};
+COOP_NPAD_HOOKS(FullKey)
+COOP_NPAD_HOOKS(Handheld)
+COOP_NPAD_HOOKS(JoyDual)
 
-template <typename Hook, typename State>
-int relay(State* out, int count, const nn::hid::NpadIdType& id) {
+// Read `count` states of one style from controller `id` without going through
+// our hooks, using whichever form of the SDK function the game has.
+template <typename Many, typename One, typename State>
+int readOriginal(State* out, int count, nn::hid::NpadIdType id) {
+    if (Many::installed) return Many::Orig(out, count, id);
+    if (One::installed && count > 0) {
+        One::Orig(out, id);
+        return 1;
+    }
+    return 0;
+}
+
+int readStyle(nn::hid::NpadFullKeyState* out, int count, nn::hid::NpadIdType id) {
+    return readOriginal<FullKeyMany, FullKeyOne>(out, count, id);
+}
+int readStyle(nn::hid::NpadHandheldState* out, int count, nn::hid::NpadIdType id) {
+    return readOriginal<HandheldMany, HandheldOne>(out, count, id);
+}
+int readStyle(nn::hid::NpadJoyDualState* out, int count, nn::hid::NpadIdType id) {
+    return readOriginal<JoyDualMany, JoyDualOne>(out, count, id);
+}
+
+template <typename State>
+int relay(State* out, int count, nn::hid::NpadIdType id) {
     if (!g_router) lazyInit();
 
     auto d = g_router->route(id);
     if (d.route == coop::InputRouter::Route::Passthrough) {
-        int n = Hook::Orig(out, count, id);
+        int n = readStyle(out, count, id);
         applyActive(out, n);
         return n;
     }
     if (d.route == coop::InputRouter::Route::Idle) {
-        int n = Hook::Orig(out, count, id);
+        int n = readStyle(out, count, id);
         makeIdle(out, n);
         return n;
     }
@@ -157,40 +228,55 @@ int relay(State* out, int count, const nn::hid::NpadIdType& id) {
     auto* base = static_cast<nn::hid::NpadBaseState*>(out);
     auto connected = [&](int got) { return got > 0 && (base[0].attributes & 1); };
 
-    int n = Hook::Orig(out, count, target);
+    int n = readStyle(out, count, target);
     if (!connected(n) && !std::is_same_v<State, nn::hid::NpadFullKeyState>) {
-        int got = FullKeyStates::Orig(static_cast<nn::hid::NpadFullKeyState*>(base), count, target);
+        int got = readStyle(static_cast<nn::hid::NpadFullKeyState*>(base), count, target);
         if (got > 0) n = got;
     }
     if (!connected(n) && !std::is_same_v<State, nn::hid::NpadJoyDualState>) {
-        int got = JoyDualStates::Orig(static_cast<nn::hid::NpadJoyDualState*>(base), count, target);
+        int got = readStyle(static_cast<nn::hid::NpadJoyDualState*>(base), count, target);
         if (got > 0) n = got;
     }
     applyActive(out, n);
     return n;
 }
 
-// The single-state variants go through the same relay with count = 1.
-template <typename Hook, typename State>
-void relayOne(State* out, const nn::hid::NpadIdType& id) {
-    relay<Hook>(out, 1, id);
+#define COOP_NPAD_CALLBACKS(Style)                                                                                \
+    int Style##Many::Callback(nn::hid::Npad##Style##State* out, int count, const nn::hid::NpadIdType& id) {       \
+        return relay(out, count, id);                                                                             \
+    }                                                                                                             \
+    void Style##One::Callback(nn::hid::Npad##Style##State* out, const nn::hid::NpadIdType& id) { relay(out, 1, id); }
+
+COOP_NPAD_CALLBACKS(FullKey)
+COOP_NPAD_CALLBACKS(Handheld)
+COOP_NPAD_CALLBACKS(JoyDual)
+
+template <typename Hook>
+void installNpadHook(const char* label, std::initializer_list<const char*> names) {
+    const char* found = nullptr;
+    if (uintptr_t addr = findSdkFunction(names, found)) {
+        Hook::InstallAtPtr(addr);
+        Hook::installed = true;
+        Logging.Log("[coop] hooked %s", label);
+    } else {
+        Logging.Log("[coop] this game has no %s (tried %s)", label, *names.begin());
+    }
 }
 
-HOOK_DEFINE_TRAMPOLINE(FullKeyState) {
-    static void Callback(nn::hid::NpadFullKeyState* out, const nn::hid::NpadIdType& id) {
-        relayOne<FullKeyStates>(out, id);
-    }
-};
-HOOK_DEFINE_TRAMPOLINE(HandheldState) {
-    static void Callback(nn::hid::NpadHandheldState* out, const nn::hid::NpadIdType& id) {
-        relayOne<HandheldStates>(out, id);
-    }
-};
-HOOK_DEFINE_TRAMPOLINE(JoyDualState) {
-    static void Callback(nn::hid::NpadJoyDualState* out, const nn::hid::NpadIdType& id) {
-        relayOne<JoyDualStates>(out, id);
-    }
-};
+[[maybe_unused]] void installControllerRelay() {
+    installNpadHook<FullKeyMany>("GetNpadStates(FullKey)", {"_ZN2nn3hid13GetNpadStatesEPNS0_16NpadFullKeyStateEiRKj",
+                                                            "_ZN2nn3hid13GetNpadStatesEPNS0_16NpadFullKeyStateEiRKNS0_10NpadIdTypeE"});
+    installNpadHook<HandheldMany>("GetNpadStates(Handheld)", {"_ZN2nn3hid13GetNpadStatesEPNS0_17NpadHandheldStateEiRKj",
+                                                              "_ZN2nn3hid13GetNpadStatesEPNS0_17NpadHandheldStateEiRKNS0_10NpadIdTypeE"});
+    installNpadHook<JoyDualMany>("GetNpadStates(JoyDual)", {"_ZN2nn3hid13GetNpadStatesEPNS0_16NpadJoyDualStateEiRKj",
+                                                            "_ZN2nn3hid13GetNpadStatesEPNS0_16NpadJoyDualStateEiRKNS0_10NpadIdTypeE"});
+    installNpadHook<FullKeyOne>("GetNpadState(FullKey)", {"_ZN2nn3hid12GetNpadStateEPNS0_16NpadFullKeyStateERKj",
+                                                          "_ZN2nn3hid12GetNpadStateEPNS0_16NpadFullKeyStateERKNS0_10NpadIdTypeE"});
+    installNpadHook<HandheldOne>("GetNpadState(Handheld)", {"_ZN2nn3hid12GetNpadStateEPNS0_17NpadHandheldStateERKj",
+                                                            "_ZN2nn3hid12GetNpadStateEPNS0_17NpadHandheldStateERKNS0_10NpadIdTypeE"});
+    installNpadHook<JoyDualOne>("GetNpadState(JoyDual)", {"_ZN2nn3hid12GetNpadStateEPNS0_16NpadJoyDualStateERKj",
+                                                          "_ZN2nn3hid12GetNpadStateEPNS0_16NpadJoyDualStateERKNS0_10NpadIdTypeE"});
+}
 
 // ---- Game functions (from offsets.ini) -------------------------------------
 
@@ -286,24 +372,36 @@ void installGameHooks(const std::string& text) {
 // ---- Startup ----------------------------------------------------------------
 
 void loadConfig() {
-    std::string text;
     coop::Settings settings = coop::defaultSettings();
+    std::string config, offsets;
+    bool haveOffsets = false;
 
-    if (nn::fs::MountSdCardForDebug(kMount) != 0) {
-        Logging.Log("[coop] can't open the SD card; using default settings");
-    } else if (!readSdFile(kConfigPath, text)) {
-        Logging.Log("[coop] no %s; using default settings", kConfigPath);
+    Fs fs = findFs();
+    if (!fs.usable()) {
+        Logging.Log("[coop] this game's SDK has no SD card functions; using default settings");
     } else {
-        auto result = coop::parseSettings(text);
-        for (const auto& e : result.errors) Logging.Log("[coop] coop.ini error %s", e.c_str());
-        for (const auto& w : result.warnings) Logging.Log("[coop] coop.ini %s", w.c_str());
-        settings = std::move(result.settings);
+        // nn::fs aborts the whole game on some errors unless told not to.
+        if (fs.setEnabledAutoAbort) fs.setEnabledAutoAbort(false);
+        if (fs.mountSdCardForDebug(kMount) != 0) {
+            Logging.Log("[coop] can't open the SD card; using default settings");
+        } else {
+            if (!readSdFile(fs, kConfigPath, config)) {
+                Logging.Log("[coop] no %s; using default settings", kConfigPath);
+            } else {
+                auto result = coop::parseSettings(config);
+                for (const auto& e : result.errors) Logging.Log("[coop] coop.ini error %s", e.c_str());
+                for (const auto& w : result.warnings) Logging.Log("[coop] coop.ini %s", w.c_str());
+                settings = std::move(result.settings);
+            }
+            haveOffsets = readSdFile(fs, kOffsetsPath, offsets);
+        }
+        if (fs.setEnabledAutoAbort) fs.setEnabledAutoAbort(true);
     }
 
     g_state = new coop::CoopState(std::move(settings));
     Logging.Log("[coop] %d players ready. Hold ZL + ZR and press Plus to pass the turn.", g_state->playerCount());
 
-    if (readSdFile(kOffsetsPath, text)) installGameHooks(text);
+    if (haveOffsets) installGameHooks(offsets);
 }
 
 // The SD card isn't usable yet when exl_main runs, so settings load on the
@@ -317,14 +415,12 @@ void lazyInit() {
 
 extern "C" void exl_main(void*, void*) {
     exl::hook::Initialize();
-
-    using namespace nn::hid;
-    FullKeyStates::InstallAtFuncPtr(static_cast<int (*)(NpadFullKeyState*, int, const NpadIdType&)>(GetNpadStates));
-    HandheldStates::InstallAtFuncPtr(static_cast<int (*)(NpadHandheldState*, int, const NpadIdType&)>(GetNpadStates));
-    JoyDualStates::InstallAtFuncPtr(static_cast<int (*)(NpadJoyDualState*, int, const NpadIdType&)>(GetNpadStates));
-    FullKeyState::InstallAtFuncPtr(static_cast<void (*)(NpadFullKeyState*, const NpadIdType&)>(GetNpadState));
-    HandheldState::InstallAtFuncPtr(static_cast<void (*)(NpadHandheldState*, const NpadIdType&)>(GetNpadState));
-    JoyDualState::InstallAtFuncPtr(static_cast<void (*)(NpadJoyDualState*, const NpadIdType&)>(GetNpadState));
+#ifdef FE3H_COOP_BARE
+    Logging.Log("[coop] bare test module loaded; doing nothing else");
+#else
+    Logging.Log("[coop] fe3h-coop loaded");
+    installControllerRelay();
+#endif
 }
 
 extern "C" NORETURN void exl_exception_entry() {
