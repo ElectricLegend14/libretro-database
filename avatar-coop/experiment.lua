@@ -7,6 +7,7 @@
 -- enemy or two nearby.
 
 local here = debug.getinfo(1, "S").source:match("^@(.*[/\\])") or ""
+local cfg = dofile(here .. "config.lua")
 local mem = dofile(here .. "memory.lua")
 
 -- Which hero the player controls: 0 with Aang, 1 with Sokka. Changing
@@ -26,42 +27,89 @@ for key in pairs(joypad.get()) do
   end
 end
 
--- A "tag-in": control goes to the other hero for `frames` frames with
--- `button` pressed (and Player 1's buttons released), then comes back.
+-- A "tag-in": control goes to the other hero, `button` is pressed for
+-- `frames` frames once the switch has really happened, then control comes
+-- back. The switch takes the game a few frames; it has happened when Player
+-- 1's fixed position copy jumps to the other hero.
 local tag = nil
+local last_report = ""
+local SWITCH_TIMEOUT = 120 -- frames to wait for a switch before giving up
+local JUMP = 30000 -- position change that counts as the copy jumping
+
+local function p1_position()
+  return mem.read(cfg.p1.x), mem.read(cfg.p1.y)
+end
+
+local function moved_from(pos)
+  local x, y = p1_position()
+  return x and pos.x and math.sqrt((x - pos.x) ^ 2 + (y - pos.y) ^ 2) > JUMP
+end
 
 local function start_tag(button, frames)
   local home = mem.read(ACTIVE)
-  tag = { button = button, left = frames, home = home, other = home == 0 and 1 or 0 }
+  local x, y = p1_position()
+  tag = {
+    button = button,
+    frames = frames,
+    home = home,
+    other = home == 0 and 1 or 0,
+    phase = "switching",
+    count = 0,
+    from = { x = x, y = y },
+    times = {},
+  }
+end
+
+-- Release every DS button, except `button` if given.
+local function set_pad(button)
+  local pad = {}
+  for _, name in ipairs(BUTTONS) do
+    if pad_names[name] then
+      pad[pad_names[name]] = name == button
+    end
+  end
+  joypad.set(pad)
 end
 
 local function run_tag()
   if not tag then
     return
   end
-  if tag.left > 0 then
+  tag.count = tag.count + 1
+  if tag.phase == "switching" then
     mem.write(ACTIVE, tag.other)
-    local pad = {}
-    for _, name in ipairs(BUTTONS) do
-      if pad_names[name] then
-        pad[pad_names[name]] = name == tag.button
-      end
+    set_pad(nil)
+    if moved_from(tag.from) or tag.count >= SWITCH_TIMEOUT then
+      tag.times.switch = moved_from(tag.from) and tag.count or "never"
+      tag.phase, tag.count = "pressing", 0
+      local x, y = p1_position()
+      tag.at = { x = x, y = y }
     end
-    joypad.set(pad)
-    tag.left = tag.left - 1
+  elseif tag.phase == "pressing" then
+    set_pad(tag.button)
+    if tag.count >= tag.frames then
+      tag.phase, tag.count = "returning", 0
+    end
   else
     mem.write(ACTIVE, tag.home)
-    tag = nil
+    set_pad(nil)
+    if moved_from(tag.at) or tag.count >= SWITCH_TIMEOUT then
+      tag.times.back = moved_from(tag.at) and tag.count or "never"
+      last_report = string.format("Last tag-in: switch took %s frames, %s held %d, back took %s frames",
+        tostring(tag.times.switch), tag.button, tag.frames, tostring(tag.times.back))
+      console.log(last_report)
+      tag = nil
+    end
   end
 end
 
 local experiments = {
   { name = "Switch control to the other hero", run = function() mem.write(ACTIVE, mem.read(ACTIVE) == 0 and 1 or 0) end },
-  { name = "Other hero presses A for 1 frame, then back", run = function() start_tag("A", 1) end },
-  { name = "Other hero presses A for 4 frames, then back", run = function() start_tag("A", 4) end },
-  { name = "Other hero presses A for 12 frames, then back", run = function() start_tag("A", 12) end },
-  { name = "Other hero presses B for 4 frames, then back", run = function() start_tag("B", 4) end },
-  { name = "Other hero presses Y for 4 frames, then back", run = function() start_tag("Y", 4) end },
+  { name = "Tag in, press A for 1 frame, back", run = function() start_tag("A", 1) end },
+  { name = "Tag in, press A for 4 frames, back", run = function() start_tag("A", 4) end },
+  { name = "Tag in, press A for 20 frames, back", run = function() start_tag("A", 20) end },
+  { name = "Tag in, press B for 4 frames, back", run = function() start_tag("B", 4) end },
+  { name = "Tag in, press Y for 4 frames, back", run = function() start_tag("Y", 4) end },
 }
 
 -- Number keys, by the names BizHawk may use (the same list as config.lua).
@@ -112,5 +160,6 @@ while true do
   gui.text(2, y + 6, string.format("Using switch %08X (9 = change): hero %d%s", ACTIVE.addr, mem.read(ACTIVE),
     tag and " (tagged in)" or ""))
   gui.text(2, y + 20, string.format("021D3E24 = %d   021C7725 = %d", mem.read(SWITCHES[1]), mem.read(SWITCHES[2])))
+  gui.text(2, y + 34, tag and ("Tag-in: " .. tag.phase .. "...") or last_report)
   emu.frameadvance()
 end
