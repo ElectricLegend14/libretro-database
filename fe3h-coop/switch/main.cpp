@@ -122,7 +122,8 @@ bool readSdFile(const Fs& fs, const char* path, std::string& out) {
     nn::fs::FileHandle file;
     if (fs.openFile(&file, path, nn::fs::OpenMode_Read) != 0) return false;
     long size = 0;
-    bool ok = fs.getFileSize(&size, file) == 0 && size >= 0 && size < 64 * 1024;
+    // The mod's heap is 256 KB (switch/build.sh); settings files are small.
+    bool ok = fs.getFileSize(&size, file) == 0 && size >= 0 && size < 32 * 1024;
     if (ok) {
         out.resize(size_t(size));
         ok = fs.readFile(file, 0, out.data(), ulong(size)) == 0;

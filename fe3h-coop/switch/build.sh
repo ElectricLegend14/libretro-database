@@ -56,6 +56,19 @@ sed -i \
     -e "s|^NPDM_JSON :=.*|NPDM_JSON := fe3h-coop.json|" \
     -e "s|^C_FLAGS :=.*|C_FLAGS := ${COOP_BARE:+-DFE3H_COOP_BARE}|" \
     "$EXL/config.mk"
+# exlaunch's defaults are sized for tiny mods: a 20 KB heap is too close to
+# what reading coop.ini needs, and running out kills the game. Give the mod
+# 256 KB of heap and more room for hook trampolines.
+sed -i \
+    -e 's/\(HeapSize = \)0x[0-9a-fA-F]*/\10x40000/' \
+    -e 's/\(JitSize = \)0x[0-9a-fA-F]*/\10x4000/' \
+    -e 's/#define EXL_MODULE_NAME ".*"/#define EXL_MODULE_NAME "fe3h-coop"/' \
+    "$EXL/source/program/setting.hpp"
+grep -q 'HeapSize = 0x40000' "$EXL/source/program/setting.hpp" || {
+    echo "Couldn't set exlaunch's heap size; has setting.hpp changed?" >&2
+    exit 1
+}
+
 if [ -n "${RYU_PATH:-}" ]; then
     sed -i "s|^RYU_PATH :=.*|RYU_PATH := $RYU_PATH|" "$EXL/config.mk"
 fi
