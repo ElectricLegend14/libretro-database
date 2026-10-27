@@ -49,8 +49,13 @@ for key in pairs(joypad.get()) do
   end
 end
 
+local held_text = ""
+
 local function draw()
   gui.text(2, 2, status)
+  -- Shows the names BizHawk gives the keys being pressed, in case a key
+  -- isn't recognised and its name needs adding to config.lua.
+  gui.text(2, 2 + (SHOW + 2) * 14, held_text)
   local first = math.max(1, math.min(current - 3, #candidates - SHOW + 1))
   for i = first, math.min(#candidates, first + SHOW - 1) do
     local c = candidates[i]
@@ -449,6 +454,12 @@ while true do
   local function pressed(k)
     return keys[k] and not previous[k]
   end
+  local names = {}
+  for name in pairs(keys) do
+    names[#names + 1] = name
+  end
+  table.sort(names)
+  held_text = #names > 0 and "Keys held: " .. table.concat(names, " ") or ""
   local label = label_pressed(pressed)
   if buttons.Right and pressed("T") then
     run_search()

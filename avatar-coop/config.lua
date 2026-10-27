@@ -79,11 +79,13 @@ return {
   -- Player 2 switches to the next hero.
   p2_switch = { "H", "X2 RightShoulder" },
   -- Turn each hero's computer control on or off, in the order of `heroes`.
+  -- Number keys go by different names depending on the BizHawk version, so
+  -- each common name is listed (top row first, then the number pad).
   ai_toggle = {
-    { "D1", "NumberPad1" },
-    { "D2", "NumberPad2" },
-    { "D3", "NumberPad3" },
-    { "D4", "NumberPad4" },
+    { "D1", "Number1", "1", "NumberPad1", "Keypad1" },
+    { "D2", "Number2", "2", "NumberPad2", "Keypad2" },
+    { "D3", "Number3", "3", "NumberPad3", "Keypad3" },
+    { "D4", "Number4", "4", "NumberPad4", "Keypad4" },
   },
 
   -- Show which host buttons are being pressed, to help set up the keys.
