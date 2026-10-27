@@ -18,17 +18,18 @@ return {
     y = nil, -- required: vertical position (the depth axis if the game is 3D)
     facing = nil, -- optional: direction the character faces
     -- How far Player 2 moves per frame, in the game's own position units.
-    -- DS games often use fixed point where 4096 = 1 unit, so start there
-    -- and adjust until the speed feels right.
-    speed = 4096,
+    -- Aang walks about 10,000 per frame (finder: ~203,000 in 20 frames).
+    speed = 10000,
     -- Values written to `facing` for each direction, once you know them.
     facing_values = { left = nil, right = nil, up = nil, down = nil },
   },
 
   -- Player 1's character. Optional: only used for the leash.
+  -- Aang, found with finder.lua in the first level. These are heap addresses
+  -- and may move in other levels until the pointer to them is known.
   p1 = {
-    x = nil,
-    y = nil,
+    x = { addr = 0x02223FEC },
+    y = { addr = 0x02223FF4 },
   },
 
   -- Keep Player 2 within this distance of Player 1 so they can't wander off

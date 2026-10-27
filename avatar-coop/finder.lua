@@ -155,7 +155,37 @@ local function save_results()
     f:write(string.format("%-5s 0x%08X  %d%s\n", c.axis, 0x02000000 + c.off, c.moved,
       c.marked and "  MATCH" or ""))
   end
+  for _, c in ipairs(candidates) do
+    if c.marked and c.pointers then
+      f:write(string.format("\nPointers near 0x%08X (pointer -> offset):\n", 0x02000000 + c.off))
+      for _, p in ipairs(c.pointers) do
+        f:write(string.format("  0x%08X -> 0x%X\n", 0x02000000 + p.at, p.offset))
+      end
+    end
+  end
   f:close()
+end
+
+-- Positions in heap memory move between levels, but something always points
+-- at the character's data. List every value pointing up to POINTER_RANGE
+-- bytes before `off`; comparing two levels shows which pointer is stable.
+local POINTER_RANGE = 0x400
+local MAX_POINTERS = 60
+local function find_pointers(off)
+  local target = 0x02000000 + off
+  local found = {}
+  for at, v in pairs(read_all()) do
+    if v >= target - POINTER_RANGE and v <= target then
+      found[#found + 1] = { at = at, offset = target - v }
+    end
+  end
+  table.sort(found, function(a, b)
+    return a.at < b.at
+  end)
+  while #found > MAX_POINTERS do
+    table.remove(found)
+  end
+  return found
 end
 
 local function test(i)
@@ -207,7 +237,14 @@ while true do
   elseif #candidates > 0 and pressed("B") then
     test(current <= 1 and #candidates or current - 1)
   elseif current > 0 and pressed("M") then
-    candidates[current].marked = not candidates[current].marked
+    local c = candidates[current]
+    c.marked = not c.marked
+    if c.marked and not c.pointers then
+      status = "Looking for pointers to this one..."
+      draw()
+      c.pointers = find_pointers(c.off)
+      status = string.format("Marked, %d pointers saved. N/B = next/previous", #c.pointers)
+    end
     save_results()
   end
   previous = keys
