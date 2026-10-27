@@ -139,6 +139,22 @@ real attacks and bending, and lets "AI off" switch the computer off properly.
    followed the buttons, and "Controlled hero's data" says where your hero
    is, so Claude can tell which value belongs to the hero.
 
+### 5. Label search (which hero you're controlling)
+
+The game must remember which hero you're controlling, and which ones the
+computer controls. Finding that is the next step toward Player 2 attacks and
+a real "AI off". It also finds each hero's data, and pointers to it, without
+the walking search.
+
+1. Run `finder.lua` in a level with at least two heroes.
+2. Control **Aang**, stand still, and press **1**.
+3. Tap **Sokka** on the touch screen, stand still, and press **2**.
+4. Repeat steps 2–3 at least **three times** (more is better; also use **3**
+   for Katara and **4** for Haru if you have them). Move around a bit between
+   snapshots so only the important values stay the same. The status line
+   shows how many values are left.
+5. Send Claude `finder-results.txt`.
+
 ### Finding addresses by hand (fallback)
 
 If the finder can't find anything, use **Tools > RAM Search** with the domain

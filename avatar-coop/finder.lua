@@ -11,6 +11,11 @@
 --   M      mark the candidate being tested as a real position
 --   P      run the button search: presses A, B, X and Y by itself and finds
 --          values that follow them, such as the hero's own "controller"
+--   1-4    label search: take a snapshot labelled with that number. Press
+--          the number of the hero you're controlling (1 Aang, 2 Sokka,
+--          3 Katara, 4 Haru), switch heroes, and repeat, at least twice per
+--          hero. It keeps memory that always reads the same for the same
+--          label and differs between labels.
 -- Results are saved to finder-results.txt next to this script.
 
 local here = debug.getinfo(1, "S").source:match("^@(.*[/\\])") or ""
@@ -29,6 +34,10 @@ local candidates = {}
 local current = 0
 local test_state = nil
 local button_results = nil
+-- Label search state: the first snapshot in full, then candidate offsets and
+-- the byte each one read for each label.
+local labels = { count = 0, used = {}, base = nil, offs = nil, seen = {}, heroes = {} }
+local MAX_LABEL_RESULTS = 300
 
 -- The DS has one controller; find what BizHawk calls its buttons.
 local buttons = {}
@@ -193,6 +202,38 @@ local function save_results()
       f:write(string.format("  0x%08X\n", 0x02000000 + off))
     end
   end
+  if labels.count > 0 then
+    local names = {}
+    for name in pairs(labels.used) do
+      names[#names + 1] = name
+    end
+    table.sort(names)
+    f:write(string.format("\nLabel search (%d snapshots)\n", labels.count))
+    for _, name in ipairs(names) do
+      f:write("Controlled hero's data for label " .. name .. ":")
+      for _, off in ipairs(labels.heroes[name]) do
+        f:write(string.format(" 0x%08X", 0x02000000 + off))
+      end
+      f:write("\n")
+    end
+    f:write("address     " .. table.concat(names, "     ") .. "\n")
+    local shown = 0
+    for _, off in ipairs(labels.offs or {}) do
+      -- Only values that tell every label apart.
+      local seen, distinct, count, line = labels.seen[off], {}, 0, ""
+      for _, name in ipairs(names) do
+        local v = seen[name]
+        if v ~= nil and not distinct[v] then
+          distinct[v], count = true, count + 1
+        end
+        line = line .. (v and string.format("  0x%02X", v) or "  ----")
+      end
+      if count == #names and shown < MAX_LABEL_RESULTS then
+        f:write(string.format("0x%08X%s\n", 0x02000000 + off, line))
+        shown = shown + 1
+      end
+    end
+  end
   f:close()
 end
 
@@ -279,6 +320,47 @@ local function find_heroes()
   return heroes
 end
 
+-- One label search snapshot. Until two different labels have been seen, the
+-- latest snapshot is kept in full; after that only differing bytes are kept,
+-- and dropped as soon as one reads differently for a label it had before.
+local function label_snapshot(name)
+  local s = labels
+  s.count, s.used[name] = s.count + 1, true
+  s.heroes[name] = s.heroes[name] or find_heroes()
+  if s.offs then
+    local kept = {}
+    for _, off in ipairs(s.offs) do
+      local v, seen = memory.read_u8(off, DOMAIN), s.seen[off]
+      if seen[name] == nil or seen[name] == v then
+        seen[name] = v
+        kept[#kept + 1] = off
+      else
+        s.seen[off] = nil
+      end
+    end
+    s.offs = kept
+  elseif s.base and s.base.name ~= name then
+    local bytes, base = ram_bytes()
+    local old = s.base
+    s.offs = {}
+    for off = 0, RAM_SIZE - 1 do
+      local a, b = old.bytes[off + old.start], bytes[off + base]
+      if a ~= b then
+        s.offs[#s.offs + 1] = off
+        s.seen[off] = { [old.name] = a, [name] = b }
+      end
+    end
+    s.base = nil
+  else
+    local bytes, base = ram_bytes()
+    s.base = { bytes = bytes, start = base, name = name }
+  end
+  save_results()
+  status = string.format("Snapshot %d saved as label %s. %s", s.count, name,
+    s.offs and (#s.offs .. " values left.") or "Now switch and press another number.")
+  console.log(status)
+end
+
 local function run_button_search()
   local start = memorysavestate.savecorestate()
   local found = button_search()
@@ -348,16 +430,32 @@ if not buttons.Right then
   status = "Couldn't find the D-pad in joypad.get() - is a DS game loaded?"
 end
 
+-- The number pressed for a label snapshot, using the same key names as the
+-- AI toggles in config.lua.
+local function label_pressed(pressed)
+  for i, names in ipairs(cfg.ai_toggle) do
+    for _, k in ipairs(names) do
+      if pressed(k) then
+        return tostring(i)
+      end
+    end
+  end
+  return nil
+end
+
 local previous = {}
 while true do
   local keys = input.get()
   local function pressed(k)
     return keys[k] and not previous[k]
   end
+  local label = label_pressed(pressed)
   if buttons.Right and pressed("T") then
     run_search()
   elseif buttons.A and pressed("P") then
     run_button_search()
+  elseif label then
+    label_snapshot(label)
   elseif #candidates > 0 and pressed("N") then
     test(current % #candidates + 1)
   elseif #candidates > 0 and pressed("B") then
